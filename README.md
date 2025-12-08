@@ -19,6 +19,14 @@ M5Stack-Avatar でスタックチャンの顔を表示するプロジェクト�
 
 ## Screenshots
 
-![Mining stackchan avatar](images/mining-stackchan-core2_avatar.jpg)
+<p>
+  <img src="images/mining-stackchan-core2_avatar.jpg"
+       alt="Mining stackchan avatar"
+       width="400">
+</p>
 
-![Mining status screen](images/mining-stackchan-core2_mining.jpg)
+<p>
+  <img src="images/mining-stackchan-core2_mining.jpg"
+       alt="Mining status screen"
+       width="400">
+</p>
