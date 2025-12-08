@@ -1,0 +1,10 @@
+﻿# secrets
+src/config_private.h
+
+# local tests you don't want to publish
+test/
+
+# PlatformIO
+.pio/
+.vscode/
+*.log
