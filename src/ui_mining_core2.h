@@ -75,6 +75,12 @@ public:
   // 1フレーム分の描画
   void drawAll(const PanelData& p, const String& tickerText);
 
+  // 起動時のスプラッシュ画面（WiFi / Pool / System の3行ステータス）
+  void drawSplash(const String& wifiText,  uint16_t wifiCol,
+                  const String& poolText,  uint16_t poolCol,
+                  const String& sysText,   uint16_t sysCol);
+
+
   // Aボタンで切り替える「スタックチャン画面」（暫定・文字だけ版）
   void drawStackchanScreen(const PanelData& p);
 
@@ -148,6 +154,18 @@ private:
   uint32_t last_tick_ms_  = 0;
 
   float hr_ref_kh_ = 0.0f;
+  
+  // スプラッシュ画面の状態
+  bool     splash_active_   = false;
+  uint32_t splash_start_ms_ = 0;
+
+  // スプラッシュの前回描画内容（チラつき防止用）
+  String   splash_wifi_text_;
+  String   splash_pool_text_;
+  String   splash_sys_text_;
+  uint16_t splash_wifi_col_  = WHITE;
+  uint16_t splash_pool_col_  = WHITE;
+  uint16_t splash_sys_col_   = WHITE;
 
   // 画面モード状態
   bool   in_stackchan_mode_   = false;  // 今スタックチャン画面か

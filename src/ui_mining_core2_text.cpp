@@ -91,7 +91,7 @@ String UIMining::vHash(float kh) const {
   return String(b);
 }
 
-// accepted / rejected / success% 表示
+
 String UIMining::vShare(uint32_t acc, uint32_t rej, uint8_t& successOut) {
   uint32_t total   = acc + rej;
   uint8_t  success = 0;
@@ -102,14 +102,33 @@ String UIMining::vShare(uint32_t acc, uint32_t rej, uint8_t& successOut) {
   }
   successOut = success;
 
-  // 例: "286/6 98%"（最大 9 文字）
   char b[16];
-  snprintf(b, sizeof(b), "%u/%u %u%%",
-           static_cast<unsigned>(acc),
-           static_cast<unsigned>(rej),
-           static_cast<unsigned>(success));
+
+  // 1) まずは従来どおり "acc/rej xx%" を試す
+  int n = snprintf(b, sizeof(b), "%u/%u %u%%",
+                   static_cast<unsigned>(acc),
+                   static_cast<unsigned>(rej),
+                   static_cast<unsigned>(success));
+
+  if (n > 9) {
+    // 2) 9文字を超えるなら、% を落として "acc/rej xx" にする
+    n = snprintf(b, sizeof(b), "%u/%u %u",
+                 static_cast<unsigned>(acc),
+                 static_cast<unsigned>(rej),
+                 static_cast<unsigned>(success));
+  }
+
+  if (n > 9) {
+    // 3) それでも長いケース（すごく桁が増えたとき）は
+    //    "acc/rej" だけにして、成功率は色で表現
+    snprintf(b, sizeof(b), "%u/%u",
+             static_cast<unsigned>(acc),
+             static_cast<unsigned>(rej));
+  }
+
   return String(b);
 }
+
 
 String UIMining::vDiff(float diff) const {
   // simple K notation
@@ -194,16 +213,21 @@ uint16_t UIMining::cHash(const PanelData& p) const {
 }
 
 uint16_t UIMining::cShare(uint8_t s) const {
-  if (s >= 95) return 0x07E0;
-  if (s >= 90) return WHITE;
-  return 0xFD20;
+  if (s == 0)        return TFT_RED; // 完全に掘れていないときは赤
+
+  if (s >= 95)       return 0x07E0;  // good
+  if (s >= 90)       return WHITE;   // まあまあ
+  return 0xFD20;                     // それ以下は黄色〜オレンジ
 }
 
+
 uint16_t UIMining::cSharePct(float s) const {
-  if (s >= 95.0f) return 0x07E0; // green
-  if (s >= 90.0f) return WHITE;
-  return 0xFD20; // orange
+  if (s >= 95.0f) return 0x07E0;   // green
+  if (s >= 90.0f) return WHITE;    // white
+  if (s >= 70.0f) return 0xFD20;   // orange/yellow
+  return 0xF800;                   // red
 }
+
 
 uint16_t UIMining::cLast(uint32_t age) const {
   if (age <= 30)  return 0x07E0;

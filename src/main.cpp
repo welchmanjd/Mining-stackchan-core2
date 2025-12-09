@@ -55,7 +55,6 @@ static void setupTimeNTP() {
 void setup() {
   setCpuFrequencyMhz(240);
 
-
   auto cfg_m5 = M5.config();
   cfg_m5.output_power  = true;
   cfg_m5.clear_display = true;
@@ -68,6 +67,12 @@ void setup() {
   M5.Display.setTextColor(WHITE, BLACK);
 
   const auto& cfg = appConfig();
+
+  // ★ ここでいきなりUI起動 & スプラッシュ表示
+  UIMining::instance().begin(cfg.app_name, cfg.app_version);
+  lastUiMs = 0;
+
+  // そのあとログを流しつつ接続処理
   mc_logf("%s %s booting...", cfg.app_name, cfg.app_version);
 
   wifi_connect();
@@ -75,10 +80,9 @@ void setup() {
 
   // FreeRTOS タスクでマイニング開始
   startMiner();
-
-  UIMining::instance().begin(cfg.app_name, cfg.app_version);
-  lastUiMs = 0;
 }
+
+
 
 void loop() {
   M5.update();

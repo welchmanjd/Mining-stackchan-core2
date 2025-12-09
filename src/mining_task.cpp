@@ -170,17 +170,35 @@ static void duco_task(void* pv) {
       continue;
     }
     String serverVer = cli.readStringUntil('\n');
-    (void)serverVer;
+    serverVer.trim();  // ← ここ追加
+
+    // ★ 追加：サーバーバージョンをログ
+    mc_logf("[DUCO-%s] server version: %s",
+        tag, serverVer.c_str());
     me.connected = true;
     g_status = String("connected (") + tag + ") " + g_node_name;
 
     // ===== JOB loop =====
     while (cli.connected()) {
       // Request job（user, board, miningKey）
-      String req = String("JOB,") + cfg.duco_user + ",AVR," +
-                   cfg.duco_miner_key + "\n";
+      // Request job（user, board, miningKey）
+      // NOTE:
+      //   ESP32 を名乗ると Kolka に「Too high starting difficulty」と言われて全シェアがリジェクトされる。
+      //   AVR を名乗れば通るが、実際は ESP32 なのでボード名で嘘をつきたくない。
+      //   そのため、汎用スタート難易度ラベル "LOW" を指定し、具体的な難易度調整は
+      //   サーバー側（Kolka）に任せる方針。
+      String req = String("JOB,") + cfg.duco_user + ",LOW," +
+                  cfg.duco_miner_key + "\n";
+
+      // ★ 追加：何を投げたか（miner_key はログに出さない）
+      mc_logf("[DUCO-%s] send JOB user=%s board=LOW",
+              tag, cfg.duco_user);
+
+
       unsigned long ping0 = millis();
       cli.print(req);
+
+      // job を待つ
       t0 = millis();
       while (!cli.available() && cli.connected() && millis() - t0 < 10000) {
         vTaskDelay(10 / portTICK_PERIOD_MS);
@@ -188,9 +206,16 @@ static void duco_task(void* pv) {
       if (!cli.available()) {
         me.connected = false;
         g_status = String("no job (") + tag + ")";
+
+        // ★ 追加：タイムアウトをログ
+        mc_logf("[DUCO-%s] no job (timeout)", tag);
         break;
       }
       me.last_ping_ms = (float)(millis() - ping0);
+
+      // ★ 追加：ping をログ
+      mc_logf("[DUCO-%s] job ping = %.1f ms",
+          tag, me.last_ping_ms);
 
       // job: previousHash,expectedHash,difficulty\n
       String prev     = cli.readStringUntil(',');
@@ -203,6 +228,11 @@ static void duco_task(void* pv) {
       int difficulty = diffStr.toInt();
       if (difficulty <= 0) difficulty = 1;
       me.difficulty = (uint32_t)difficulty;
+
+     // ★ 追加：ジョブの中身をログ
+     mc_logf("[DUCO-%s] job diff=%d prev=%s expected=%s",
+          tag, difficulty,
+          prev.c_str(), expected.c_str());
 
       // expected(hex) → 20バイト
       const size_t SHA_LEN = 20;
@@ -229,6 +259,15 @@ static void duco_task(void* pv) {
       if (sec <= 0) sec = 0.001f;
       float hps = hashes / (sec > 0 ? sec : 0.001f);
 
+      
+      // ★ 追加：solver の実績をログ
+      mc_logf("[DUCO-%s] solved nonce=%u hashes=%u time=%.3fs (%.1f H/s)",
+            tag,
+            (unsigned)foundNonce,
+            (unsigned)hashes,
+            sec,
+            hps);
+
       if (foundNonce == UINT32_MAX) {
         g_status = String("no share (") + tag + ")";
         vTaskDelay(5 / portTICK_PERIOD_MS);
@@ -247,6 +286,11 @@ static void duco_task(void* pv) {
           String(g_walletid) + "\n";
       cli.print(submit);
 
+      
+      // ★ 追加：送った内容（短く）をログ
+      mc_logf("[DUCO-%s] submit nonce=%u hps=%.1f",
+              tag, (unsigned)foundNonce, hps);
+
       // feedback
       t0 = millis();
       while (!cli.available() && cli.connected() && millis() - t0 < 10000) {
@@ -254,10 +298,20 @@ static void duco_task(void* pv) {
       }
       if (!cli.available()) {
         g_status = String("no feedback (") + tag + ")";
+
+        // ★ 追加：timeout も「失敗したシェア」として数える
+        ++me.rejected;
+        ++g_rej_all;
+
+        mc_logf("[DUCO-%s] no feedback (timeout)", tag);
         break;
       }
       String fb = cli.readStringUntil('\n');
       fb.trim();
+
+      // ★ 追加：フィードバックそのもの
+      mc_logf("[DUCO-%s] feedback: '%s'", tag, fb.c_str());
+
       if (fb.startsWith("GOOD")) {
         ++me.accepted;
         ++g_acc_all;
