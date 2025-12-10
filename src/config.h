@@ -2,6 +2,10 @@
 #pragma once
 #include <Arduino.h>
 #include "config_private.h"   // ← 秘密情報はここから
+// 無操作スリープ秒数（config_private で未定義なら 60 秒）
+#ifndef MC_DISPLAY_SLEEP_SECONDS
+#define MC_DISPLAY_SLEEP_SECONDS 60
+#endif
 
 struct AppConfig {
   const char* wifi_ssid;
@@ -23,7 +27,7 @@ inline const AppConfig& appConfig() {
     "Mining-Stackchan-Core2",   // DUCO_RIG_NAME
     "M5StackCore2",             // DUCO_BANNER
     "Mining-Stackchan Core2",   // APP_NAME
-    "0.32"                      // APP_VERSION
+    "0.33"                      // APP_VERSION
   };
   return cfg;
 }

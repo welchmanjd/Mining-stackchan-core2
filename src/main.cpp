@@ -18,10 +18,26 @@
 #include "logging.h"   // ← 他の #include と一緒に、ファイル先頭の方へ移動推奨
 
 // UI 更新用の前回時刻 [ms]
-static unsigned long lastUiMs = 0;  // ★これを追加
+static unsigned long lastUiMs = 0;
 
 // Aボタンで切り替える画面モード
 static bool g_stackchanMode = false;
+
+// ===== 自動スリープ関連 =====
+
+// 最後に「ユーザー入力」があった時刻 [ms]
+static unsigned long lastInputMs = 0;
+
+// 画面がスリープ（消灯）中かどうか
+static bool displaySleeping = false;
+
+// 画面関連の定数
+static const uint8_t  DISPLAY_ACTIVE_BRIGHTNESS = 128;     // 通常時の明るさ
+static const uint32_t DISPLAY_SLEEP_TIMEOUT_MS  =
+    (uint32_t)MC_DISPLAY_SLEEP_SECONDS * 1000UL;           // 設定値[秒]→[ms]で画面OFF
+
+// スリープ前の「Zzz…」表示時間 [ms]
+static const uint32_t DISPLAY_SLEEP_MESSAGE_MS  = 5000UL;  // ここを変えれば好きな秒数に
 
 // ---------------- WiFi / Time ----------------
 static bool wifi_connect() {
@@ -72,6 +88,11 @@ void setup() {
   UIMining::instance().begin(cfg.app_name, cfg.app_version);
   lastUiMs = 0;
 
+  // UIタイマーとスリープタイマー初期化
+  lastUiMs        = 0;
+  lastInputMs     = millis();
+  displaySleeping = false;
+
   // そのあとログを流しつつ接続処理
   mc_logf("%s %s booting...", cfg.app_name, cfg.app_version);
 
@@ -87,8 +108,51 @@ void setup() {
 void loop() {
   M5.update();
 
-  // Aボタン（左のタッチボタン）で画面モード切り替え
+  unsigned long now = millis();
+
+  // --- 入力検出（ボタン + タッチ） ---
+  bool anyInput = false;
+
+  // 物理ボタン
+  if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnC.wasPressed()) {
+    anyInput = true;
+  }
+
+  // タッチ入力（押されている間は true）
+  auto& tp = M5.Touch;
+  if (tp.isEnabled()) {
+    auto det = tp.getDetail();
+    if (det.isPressed()) {
+      anyInput = true;
+    }
+  }
+
+  // --- スリープ中の復帰処理 ---
+  if (displaySleeping) {
+    if (anyInput) {
+      // 何か入力があったら画面ONにして、このフレームは「起きるだけ」
+      mc_logf("[MAIN] display wake (sleep off)");
+      M5.Display.setBrightness(DISPLAY_ACTIVE_BRIGHTNESS);
+      displaySleeping = false;
+      lastInputMs     = now;
+    }
+
+    delay(2);
+    return;
+  }
+
+
+  // ここから「画面がON」の時の処理
+
+  if (anyInput) {
+    lastInputMs = now;
+  }
+
+  // --- Aボタン：画面モード切り替え + ビープ ---
+  // （スタックチャン画面に入る時も必ずピッと鳴る）
   if (M5.BtnA.wasPressed()) {
+    M5.Speaker.tone(1500, 50);  // 他の場所と同じ 1500Hz / 50ms
+
     g_stackchanMode = !g_stackchanMode;
     mc_logf("[MAIN] BtnA pressed, stackchanMode=%d", (int)g_stackchanMode);
 
@@ -100,9 +164,7 @@ void loop() {
     }
   }
 
-
-
-  unsigned long now = millis();
+  // --- UI 更新（100ms ごとに1回） ---
   if (now - lastUiMs >= 100) {
     lastUiMs = now;
 
@@ -147,11 +209,25 @@ void loop() {
 
     // ★ ここで画面を切り替え
     if (g_stackchanMode) {
-      ui.drawStackchanScreen(data);   // 新しい「スタックチャン画面」（仮）
+      ui.drawStackchanScreen(data);   // スタックチャン画面
     } else {
-      ui.drawAll(data, ticker);       // 既存のダッシュボード（0.21そのまま）
+      ui.drawAll(data, ticker);       // ダッシュボード画面
     }
   }
+
+  // --- 一定時間無操作なら画面OFF（マイニングは継続） ---
+  if (!displaySleeping && (now - lastInputMs >= DISPLAY_SLEEP_TIMEOUT_MS)) {
+    mc_logf("[MAIN] display sleep (screen off)");
+
+    // 右パネルだけ「Zzz…」メッセージを1秒だけ表示
+    UIMining::instance().drawSleepMessage();
+    delay(DISPLAY_SLEEP_MESSAGE_MS);  // ★ ここを定数に
+
+    M5.Display.setBrightness(0);
+    displaySleeping = true;
+  }
+
+
 
   delay(2);
 }

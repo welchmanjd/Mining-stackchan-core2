@@ -80,6 +80,8 @@ public:
                   const String& poolText,  uint16_t poolCol,
                   const String& sysText,   uint16_t sysCol);
 
+  // 自動スリープ直前に表示するメッセージ
+  void drawSleepMessage();
 
   // Aボタンで切り替える「スタックチャン画面」（暫定・文字だけ版）
   void drawStackchanScreen(const PanelData& p);

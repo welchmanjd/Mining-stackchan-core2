@@ -498,6 +498,37 @@ void UIMining::drawSplash(const String& wifiText,  uint16_t wifiCol,
 }
 
 
+void UIMining::drawSleepMessage() {
+  // 右側のパネル＆ティッカーだけメッセージに差し替える
+  info_.fillScreen(BLACK);
+  tick_.fillScreen(BLACK);
+
+  int y = 70;  // だいたい中央あたりからスタート
+
+  info_.setFont(&fonts::Font0);
+  info_.setTextColor(WHITE, BLACK);
+
+  // 1行目: "Zzz..."（ちょっと大きめ）
+  info_.setTextSize(2);
+  auto drawCenter = [&](const String& s, int lineHeight) {
+    int tw = info_.textWidth(s);
+    int x  = (INF_W - tw) / 2;
+    if (x < PAD_LR) x = PAD_LR;
+    info_.setCursor(x, y);
+    info_.print(s);
+    y += lineHeight;
+  };
+
+  drawCenter("Zzz...", 18);
+
+  // 2行目: 日本語メッセージ（普通サイズ）
+  info_.setTextSize(1);
+  drawCenter("Screen off, mining on", 14);
+
+  // 実画面に反映
+  info_.pushSprite(X_INF, 0);
+  tick_.pushSprite(0, Y_LOG);
+}
 
 
 
