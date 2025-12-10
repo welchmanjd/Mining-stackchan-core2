@@ -133,9 +133,34 @@ void UIMining::onLeaveStackchanMode() {
 void UIMining::drawAll(const PanelData& p, const String& tickerText) {
   uint32_t now = millis();
 
+
   // ===== 起動スプラッシュの表示・遷移管理 =====
   if (splash_active_) {
     wl_status_t w = WiFi.status();
+
+    // ★ "Connecting", "Connecting..", ... を行ったり来たりさせる
+    auto makeConnecting = [&](const char* base) -> String {
+      uint32_t elapsed = now - splash_start_ms_;
+
+      // 1ステップあたりの時間（お好みで 150〜300ms くらい）
+      const uint32_t period = 200;  // 0.2秒ごとに変化
+
+      // 0,1,2,3,4,5 の6ステップで 1→2→3→4→3→2 と往復させる
+      uint32_t phase = (elapsed / period) % 6;
+      uint8_t dots;
+      if (phase <= 3) {
+        dots = 1 + phase;     // 1,2,3,4
+      } else {
+        dots = 6 - phase;     // 3,2
+      }
+
+      String s(base);
+      for (uint8_t i = 0; i < dots; ++i) {
+        s += '.';
+      }
+      return s;
+    };
+
 
     // --- WiFi ライン ---
     String   wifiText;
@@ -146,7 +171,8 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText) {
     } else {
       uint32_t dt = now - splash_start_ms_;
       if (dt < 10000) {
-        wifiText = "Connecting...";
+        // ★ アニメーション付き "Connecting..."
+        wifiText = makeConnecting("Connecting");
         wifiCol  = 0xFD20;  // オレンジ
       } else {
         wifiText = "NG";
@@ -166,13 +192,15 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText) {
     } else {
       uint32_t dt = now - splash_start_ms_;
       if (dt < 12000) {
-        poolText = "Connecting...";
+        // ★ アニメーション付き "Connecting..."
+        poolText = makeConnecting("Connecting");
         poolCol  = 0xFD20;           // オレンジ
       } else {
         poolText = "NG";
         poolCol  = 0xF800;           // 赤
       }
     }
+
 
     // --- Core ライン（M5Stack Core2 のざっくり自己チェック） ---
     //   ・スプラッシュ表示から 0.5秒までは "Starting"
