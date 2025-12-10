@@ -57,6 +57,7 @@ void UIMining::begin(const char* appName, const char* appVer) {
   // 起動時スプラッシュを初期化
   splash_active_   = true;
   splash_start_ms_ = millis();
+  splash_ready_ms_ = 0;   // 「全部OKになった時刻」をリセット
 
   // 最初は「WiFi Connecting」「Pool / Core は Waiting / Checking」からスタート
   splash_wifi_text_ = "Connecting...";
@@ -183,23 +184,27 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText) {
     // --- Pool ライン ---
     String   poolText;
     uint16_t poolCol;
+    uint32_t dt_splash = now - splash_start_ms_;
+
     if (w != WL_CONNECTED) {
+      // WiFi がまだならプールも待機扱い
       poolText = "Waiting";
       poolCol  = COL_LABEL;           // グレー
     } else if (p.poolAlive) {
+      // プールから仕事が来ている
       poolText = "OK";
-      poolCol  = 0x07E0;             // 緑
+      poolCol  = 0x07E0;              // 緑
+    } else if (dt_splash < 15000) {
+      // ★タイムアウトまではずっと「Connecting...」
+      //   → NG を出したすぐ後に成功する見た目を避ける
+      poolText = makeConnecting("Connecting");
+      poolCol  = 0xFD20;              // オレンジ
     } else {
-      uint32_t dt = now - splash_start_ms_;
-      if (dt < 12000) {
-        // ★ アニメーション付き "Connecting..."
-        poolText = makeConnecting("Connecting");
-        poolCol  = 0xFD20;           // オレンジ
-      } else {
-        poolText = "NG";
-        poolCol  = 0xF800;           // 赤
-      }
+      // 15秒経ってもダメなら NG
+      poolText = "NG";
+      poolCol  = 0xF800;              // 赤
     }
+
 
 
     // --- Core ライン（M5Stack Core2 のざっくり自己チェック） ---
@@ -238,16 +243,34 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText) {
     //drawTicker(tickerText);
 
     // いつスプラッシュを終わらせるか：
-    //  WiFi 接続 ＋ Pool alive ＋ 最低3秒経過 か、
-    //  それでもダメなら15秒でタイムアウト
-    bool ready   = (w == WL_CONNECTED) && p.poolAlive &&
-                   (now - splash_start_ms_ > 3000);
+    //  WiFi 接続 ＋ Pool alive ＋ 最低3秒経過 ＋
+    //  「全部 OK になってから 1 秒待つ」か、
+    //  それでもダメなら 15 秒でタイムアウト
+    bool ok_now = (w == WL_CONNECTED) && p.poolAlive;
+
+    if (ok_now) {
+      if (splash_ready_ms_ == 0) {
+        // 初めて全部 OK になった瞬間を記録
+        splash_ready_ms_ = now;
+      }
+    } else {
+      // どれかが NG になったらリセット（ほぼ無い想定だが念のため）
+      splash_ready_ms_ = 0;
+    }
+
+    bool ready =
+      ok_now &&
+      (now - splash_start_ms_ > 3000) &&      // スプラッシュを最低3秒は見せる
+      (splash_ready_ms_ != 0) &&
+      (now - splash_ready_ms_ > 1000);        // 全OKから1秒の余韻
+
     bool timeout = (now - splash_start_ms_ > 15000);
 
     if (!ready && !timeout) {
       // まだスプラッシュ中
       return;
     }
+
 
     // ここまで来たら通常画面へ
     splash_active_ = false;
@@ -424,15 +447,9 @@ void UIMining::drawSplash(const String& wifiText,  uint16_t wifiCol,
 
   // ★画面全体はクリアしない（チラつき防止のため fillScreen は呼ばない）
 
-  // 枠線と左上の小さいタイトルは上書きで描いておく
+  // 枠線だけ上書きしておく（左上の文字列は表示しない）
   d.drawFastVLine(X_INF, 0, INF_H, 0x18C3);
   d.drawFastHLine(0, Y_LOG - 1, W, 0x18C3);
-
-  d.setFont(&fonts::Font0);
-  d.setTextSize(1);
-  d.setTextColor(WHITE, BLACK);
-  d.setCursor(4, 4);
-  d.printf("%s %s", app_name_.c_str(), app_ver_.c_str());
 
 #ifndef DISABLE_AVATAR
   // 左側アバター（スプラッシュ中も軽く動かす）
@@ -537,16 +554,23 @@ void UIMining::drawSleepMessage() {
 
 void UIMining::drawStaticFrame() {
   auto& d = M5.Display;
-  d.fillScreen(BLACK);
+
+  // ★フルリフレッシュをやめる
+  // d.fillScreen(BLACK);
+
+  // 枠線だけ描画（これならチラつかない）
   d.drawFastVLine(X_INF, 0, INF_H, 0x18C3);
   d.drawFastHLine(0, Y_LOG - 1, W, 0x18C3);
 
-  d.setFont(&fonts::Font0);
-  d.setTextSize(1);
-  d.setTextColor(WHITE, BLACK);
-  d.setCursor(4, 4);
-  d.printf("%s %s", app_name_.c_str(), app_ver_.c_str());
+  // 左上テキストも描かない
+  // d.setFont(&fonts::Font0);
+  // d.setTextSize(1);
+  // d.setTextColor(WHITE, BLACK);
+  // d.setCursor(4, 4);
+  // d.printf("%s %s", app_name_.c_str(), app_ver_.c_str());
 }
+
+
 
 // ===== Page input =====
 

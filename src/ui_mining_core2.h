@@ -160,6 +160,8 @@ private:
   // スプラッシュ画面の状態
   bool     splash_active_   = false;
   uint32_t splash_start_ms_ = 0;
+  uint32_t splash_ready_ms_ = 0;   // WiFi & Pool が揃って OK になった時刻
+
 
   // スプラッシュの前回描画内容（チラつき防止用）
   String   splash_wifi_text_;

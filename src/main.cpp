@@ -31,6 +31,9 @@ static unsigned long lastInputMs = 0;
 // 画面がスリープ（消灯）中かどうか
 static bool displaySleeping = false;
 
+// NTP が一度設定されたかどうか
+static bool g_timeNtpDone = false;
+
 // 画面関連の定数
 static const uint8_t  DISPLAY_ACTIVE_BRIGHTNESS = 128;     // 通常時の明るさ
 static const uint32_t DISPLAY_SLEEP_TIMEOUT_MS  =
@@ -39,24 +42,62 @@ static const uint32_t DISPLAY_SLEEP_TIMEOUT_MS  =
 // スリープ前の「Zzz…」表示時間 [ms]
 static const uint32_t DISPLAY_SLEEP_MESSAGE_MS  = 5000UL;  // ここを変えれば好きな秒数に
 
+
 // ---------------- WiFi / Time ----------------
+
+// WiFi 接続を「状態マシン化」したノンブロッキング版。
+// 毎フレーム呼び出される前提で、
+//   - 初回呼び出し時に WiFi.begin() をキック
+//   - 接続が完了するかタイムアウトしたら true を返す
+//   - それまでは false を返す
+// ※接続に成功したかどうかは WiFi.status() == WL_CONNECTED で判定する。
 static bool wifi_connect() {
   const auto& cfg = appConfig();
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
+  // 状態を static で保持
+  enum WifiState {
+    WIFI_NOT_STARTED,
+    WIFI_CONNECTING,
+    WIFI_DONE
+  };
+  static WifiState   state   = WIFI_NOT_STARTED;
+  static uint32_t    t_start = 0;
+  static const uint32_t WIFI_CONNECT_TIMEOUT_MS = 20000UL;
 
-  unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 20000) {
-    delay(200);
+  switch (state) {
+    case WIFI_NOT_STARTED: {
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
+      t_start = millis();
+      mc_logf("[WIFI] begin connect (ssid=%s)", cfg.wifi_ssid);
+      state = WIFI_CONNECTING;
+      return false;
+    }
+
+    case WIFI_CONNECTING: {
+      wl_status_t st = WiFi.status();
+      if (st == WL_CONNECTED) {
+        mc_logf("[WIFI] connected: %s", WiFi.localIP().toString().c_str());
+        state = WIFI_DONE;
+        return true;
+      }
+      if (millis() - t_start > WIFI_CONNECT_TIMEOUT_MS) {
+        mc_logf("[WIFI] connect timeout (status=%d)", (int)st);
+        state = WIFI_DONE;
+        // 「接続試行」としては終わったので true を返す（成功/失敗は WiFi.status() で見る）
+        return true;
+      }
+      // まだ接続試行中
+      return false;
+    }
+
+    case WIFI_DONE:
+    default:
+      // 2回目以降は何もしない
+      return true;
   }
-  if (WiFi.status() == WL_CONNECTED) {
-    mc_logf("[WIFI] connected: %s", WiFi.localIP().toString().c_str());
-    return true;
-  }
-  mc_logf("[WIFI] connect failed");
-  return false;
 }
+
 
 static void setupTimeNTP() {
   setenv("TZ", "JST-9", 1);
@@ -69,39 +110,55 @@ static void setupTimeNTP() {
 
 // ---------------- Arduino entry points ----------------
 void setup() {
+  // --- シリアルとログ（最初に開く） ---
+  Serial.begin(115200);
+  delay(50);
+  mc_logf("[MAIN] setup() start");
+
+  // --- CPUクロックを最大に ---
   setCpuFrequencyMhz(240);
 
+  // --- M5Unified の設定 ---
   auto cfg_m5 = M5.config();
-  cfg_m5.output_power  = true;
-  cfg_m5.clear_display = true;
+  cfg_m5.output_power  = true;   // 外部5VはON
+  cfg_m5.clear_display = true;   // 起動時に画面クリア
+
+  // 使っていない内蔵デバイスはOFFにしておくと安定度アップが期待できる
+  cfg_m5.internal_imu = false;   // 今はIMU使っていないのでOFF
+  cfg_m5.internal_mic = false;   // マイクも使っていないのでOFF
+  cfg_m5.internal_spk = true;    // スピーカーはビープで使うのでON
+  cfg_m5.internal_rtc = true;    // RTCはNTPと併用したいのでONのまま
+
+  mc_logf("[MAIN] call M5.begin()");
   M5.begin(cfg_m5);
+  mc_logf("[MAIN] M5.begin() done");
 
-  Serial.begin(115200);
-
-  M5.Display.setBrightness(128);
+  // --- 画面の初期状態 ---
+  M5.Display.setBrightness(DISPLAY_ACTIVE_BRIGHTNESS);
   M5.Display.fillScreen(BLACK);
   M5.Display.setTextColor(WHITE, BLACK);
 
   const auto& cfg = appConfig();
 
-  // ★ ここでいきなりUI起動 & スプラッシュ表示
+  // ★ UI起動 & スプラッシュ表示
   UIMining::instance().begin(cfg.app_name, cfg.app_version);
-  lastUiMs = 0;
 
-  // UIタイマーとスリープタイマー初期化
+  // タイマー類の初期化
   lastUiMs        = 0;
   lastInputMs     = millis();
   displaySleeping = false;
 
-  // そのあとログを流しつつ接続処理
+  // 起動ログ
   mc_logf("%s %s booting...", cfg.app_name, cfg.app_version);
 
-  wifi_connect();
-  setupTimeNTP();
+  // ★ WiFi/NTPは loop() 側でノンブロッキングに進めるのでここでは呼ばない
+  // wifi_connect();
+  // setupTimeNTP();
 
   // FreeRTOS タスクでマイニング開始
   startMiner();
 }
+
 
 
 
@@ -163,6 +220,15 @@ void loop() {
       ui.onLeaveStackchanMode();
     }
   }
+
+
+  // --- 起動時の WiFi 接続 & NTP 同期（ノンブロッキング） ---
+  bool wifiDone = wifi_connect();
+  if (wifiDone && !g_timeNtpDone && WiFi.status() == WL_CONNECTED) {
+    setupTimeNTP();
+    g_timeNtpDone = true;
+  }
+
 
   // --- UI 更新（100ms ごとに1回） ---
   if (now - lastUiMs >= 100) {
