@@ -38,6 +38,9 @@ static String   g_status = "boot";
 static bool     g_any_connected = false;
 static char     g_chip_id[16] = {0};
 static int      g_walletid = 0;
+// ★追加: プールの診断メッセージ（UIに渡す用）
+static String   g_poolDiagText = "";
+
 
 // ---------------- プール情報取得 ----------------
 static bool duco_get_pool() {
@@ -45,23 +48,45 @@ static bool duco_get_pool() {
   s.setInsecure();
   HTTPClient http;
   http.setTimeout(7000);
-  if (!http.begin(s, DUCO_POOL_URL)) return false;
+
+  if (!http.begin(s, DUCO_POOL_URL)) {
+    g_poolDiagText = "Cannot connect to the pool info server.";
+    return false;
+  }
+
   int code = http.GET();
   if (code != HTTP_CODE_OK) {
     http.end();
+    g_poolDiagText = "Pool info server responded with an error.";
     return false;
   }
+
   String body = http.getString();
   http.end();
 
   JsonDocument doc;  // ArduinoJson v7
-  if (deserializeJson(doc, body)) return false;
+  if (deserializeJson(doc, body)) {
+    g_poolDiagText = "Failed to parse pool info response.";
+    return false;
+  }
+
   g_node_name = doc["name"].as<String>();
   g_host      = doc["ip"].as<String>();
   g_port      = (uint16_t)doc["port"].as<int>();
-  mc_logf("[DUCO] Pool: %s (%s:%u)", g_node_name.c_str(),g_host.c_str(), (unsigned)g_port);
-  return g_port != 0 && g_host.length();
+
+  mc_logf("[DUCO] Pool: %s (%s:%u)", g_node_name.c_str(),
+          g_host.c_str(), (unsigned)g_port);
+
+  if (g_port != 0 && g_host.length()) {
+    // ここでは「Pool自体の情報は取得OK」
+    g_poolDiagText = "";
+    return true;
+  }
+
+  g_poolDiagText = "Pool info response is incomplete.";
+  return false;
 }
+
 
 // ---------- util: u32_to_dec（固定バッファへ10進変換） ----------
 static inline int u32_to_dec(char* dst, uint32_t v) {
@@ -138,12 +163,14 @@ static void duco_task(void* pv) {
     while (WiFi.status() != WL_CONNECTED) {
       me.connected = false;
       g_status = "WiFi connecting...";
+      g_poolDiagText = "Waiting for WiFi connection.";           // ★追加
       vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 
     // Pool
     if (g_port == 0) {
       if (!duco_get_pool()) {
+        // duco_get_pool() 内で g_poolDiagText を設定済み
         vTaskDelay(5000 / portTICK_PERIOD_MS);
         continue;
       }
@@ -155,6 +182,7 @@ static void duco_task(void* pv) {
                   tag, g_host.c_str(), g_port);
     if (!cli.connect(g_host.c_str(), g_port)) {
       me.connected = false;
+      g_poolDiagText = "Cannot connect to the pool node.";   // ★追加
       vTaskDelay(1000 / portTICK_PERIOD_MS);
       continue;
     }
@@ -166,11 +194,14 @@ static void duco_task(void* pv) {
     }
     if (!cli.available()) {
       cli.stop();
+      g_poolDiagText = "Pool node is not responding.";     // ★追加
       vTaskDelay(2000 / portTICK_PERIOD_MS);
       continue;
     }
     String serverVer = cli.readStringUntil('\n');
+    g_status       = String("connected (") + tag + ") " + g_node_name;
     serverVer.trim();  // ← ここ追加
+    g_poolDiagText = "";                          // ★ここで一旦「エラーなし」に
 
     // ★ 追加：サーバーバージョンをログ
     mc_logf("[DUCO-%s] server version: %s",
@@ -209,6 +240,7 @@ static void duco_task(void* pv) {
 
         // ★ 追加：タイムアウトをログ
         mc_logf("[DUCO-%s] no job (timeout)", tag);
+        g_poolDiagText = "No job response from the pool."; // ★追加
         break;
       }
       me.last_ping_ms = (float)(millis() - ping0);
@@ -304,6 +336,7 @@ static void duco_task(void* pv) {
         ++g_rej_all;
 
         mc_logf("[DUCO-%s] no feedback (timeout)", tag);
+        g_poolDiagText = "No result response from the pool."; // ★追加
         break;
       }
       String fb = cli.readStringUntil('\n');
@@ -317,11 +350,13 @@ static void duco_task(void* pv) {
         ++g_acc_all;
         g_status = String("share GOOD (#") + String(me.shares) +
                    ", " + tag + ")";
+        g_poolDiagText = "";     // ★正常
       } else {
         ++me.rejected;
         ++g_rej_all;
         g_status = String("share BAD (#") + String(me.shares) +
                    ", " + tag + ")";
+        // BAD のときはとりあえず直ちにPoolエラー扱いにはしない
       }
 
       vTaskDelay(5 / portTICK_PERIOD_MS);
@@ -367,9 +402,10 @@ void startMiner() {
 }
 
 // 集計だけ行い、UI に依存しない形で返す
+// 集計だけ行い、UI に依存しない形で返す
 void updateMiningSummary(MiningSummary& out) {
   float    total_kh = 0.0f;
-  float    maxPing  = 0.0f;   // ★追加
+  float    maxPing  = 0.0f;
   uint32_t acc = 0, rej = 0, diff = 0;
   g_any_connected = false;
 
@@ -382,7 +418,7 @@ void updateMiningSummary(MiningSummary& out) {
     if (g_thr[i].connected) g_any_connected = true;
 
     if (g_thr[i].last_ping_ms > maxPing) {
-      maxPing = g_thr[i].last_ping_ms; // ★追加
+      maxPing = g_thr[i].last_ping_ms;
     }
   }
 
@@ -392,7 +428,7 @@ void updateMiningSummary(MiningSummary& out) {
   out.maxDifficulty = diff;
   out.anyConnected  = g_any_connected;
   out.poolName      = g_node_name;
-  out.maxPingMs     = maxPing;         // ★これでOK
+  out.maxPingMs     = maxPing;
 
   char logbuf[64];
   snprintf(logbuf, sizeof(logbuf),
@@ -402,4 +438,8 @@ void updateMiningSummary(MiningSummary& out) {
            g_any_connected ? "alive" : "dead ",
            (unsigned)acc, (unsigned)rej, total_kh, (unsigned)diff);
   out.logLine40 = String(logbuf);
+
+  // ★追加: プール診断メッセージ
+  out.poolDiag = g_poolDiagText;
 }
+

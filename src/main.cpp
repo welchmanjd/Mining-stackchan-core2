@@ -261,6 +261,28 @@ void loop() {
     data.poolName  = summary.poolName;
     data.worker    = appConfig().duco_rig_name;
 
+        // ★ WiFi 診断メッセージ
+    {
+      wl_status_t st = WiFi.status();
+      switch (st) {
+        case WL_CONNECTED:
+          data.wifiDiag = "WiFi connection is OK";
+          break;
+        case WL_NO_SSID_AVAIL:
+          data.wifiDiag = "SSID not found. Check the AP name and power.";
+          break;
+        case WL_CONNECT_FAILED:
+          data.wifiDiag = "Check the WiFi password and encryption settings.";
+          break;
+        default:
+          data.wifiDiag = "Check your router and signal strength.";
+          break;
+      }
+    }
+
+    // ★ Pool 診断メッセージ（mining_task から）
+    data.poolDiag = summary.poolDiag;
+    
     String ticker = summary.logLine40;
     ticker += " | POOL ";
     ticker += summary.poolName;

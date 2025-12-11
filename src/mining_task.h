@@ -25,7 +25,11 @@ struct MiningSummary {
 
   // ログ用 40文字以内の1行メッセージ
   String   logLine40;
+
+  // ★追加: プール接続に関する診断メッセージ
+  String   poolDiag;
 };
+
 
 // マイニング処理（FreeRTOS タスク群）を起動
 void startMiner();

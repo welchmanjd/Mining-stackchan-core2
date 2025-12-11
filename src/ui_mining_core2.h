@@ -31,7 +31,7 @@ public:
     uint32_t accepted   = 0;
     uint32_t rejected   = 0;
 
-    float    ping_ms    = -1.0f;  // ★追加済み
+    float    ping_ms    = -1.0f;
 
     float    rej_pct    = 0.0f;   // 互換用（使わなくてもOK）
     float    bestshare  = -1.0f;
@@ -45,7 +45,12 @@ public:
     String   fw;
     String   poolName;
     String   worker;
+
+    // ★追加: 起動スプラッシュ用の診断メッセージ
+    String   wifiDiag;
+    String   poolDiag;
   };
+
 
   // 画面レイアウト定数（既存どおり）
   enum : int {
@@ -75,10 +80,11 @@ public:
   // 1フレーム分の描画
   void drawAll(const PanelData& p, const String& tickerText);
 
-  // 起動時のスプラッシュ画面（WiFi / Pool / System の3行ステータス）
+  // 起動時のスプラッシュ画面（WiFi / Pool の2行 + 診断）
   void drawSplash(const String& wifiText,  uint16_t wifiCol,
                   const String& poolText,  uint16_t poolCol,
-                  const String& sysText,   uint16_t sysCol);
+                  const String& wifiHint,  const String& poolHint);
+
 
   // 自動スリープ直前に表示するメッセージ
   void drawSleepMessage();
@@ -162,14 +168,14 @@ private:
   uint32_t splash_start_ms_ = 0;
   uint32_t splash_ready_ms_ = 0;   // WiFi & Pool が揃って OK になった時刻
 
-
   // スプラッシュの前回描画内容（チラつき防止用）
   String   splash_wifi_text_;
   String   splash_pool_text_;
-  String   splash_sys_text_;
+  String   splash_wifi_hint_;
+  String   splash_pool_hint_;
   uint16_t splash_wifi_col_  = WHITE;
   uint16_t splash_pool_col_  = WHITE;
-  uint16_t splash_sys_col_   = WHITE;
+
 
   // 画面モード状態
   bool   in_stackchan_mode_   = false;  // 今スタックチャン画面か

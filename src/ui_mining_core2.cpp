@@ -59,18 +59,19 @@ void UIMining::begin(const char* appName, const char* appVer) {
   splash_start_ms_ = millis();
   splash_ready_ms_ = 0;   // 「全部OKになった時刻」をリセット
 
-  // 最初は「WiFi Connecting」「Pool / Core は Waiting / Checking」からスタート
-  splash_wifi_text_ = "Connecting...";
-  splash_pool_text_ = "Waiting";
-  splash_sys_text_  = "Checking...";
-  splash_wifi_col_  = 0xFD20;     // オレンジ
-  splash_pool_col_  = COL_LABEL;  // グレー
-  splash_sys_col_   = 0xFD20;     // オレンジ
+  // 最初は「WiFi Connecting」「Pool Waiting」からスタート（診断はまだ空）
+  splash_wifi_text_  = "Connecting...";
+  splash_pool_text_  = "Waiting";
+  splash_wifi_col_   = 0xFD20;     // オレンジ
+  splash_pool_col_   = COL_LABEL;  // グレー
+  splash_wifi_hint_  = "";
+  splash_pool_hint_  = "";
 
   // スプラッシュ1フレーム目を描画
   drawSplash(splash_wifi_text_,  splash_wifi_col_,
              splash_pool_text_,  splash_pool_col_,
-             splash_sys_text_,   splash_sys_col_);
+             splash_wifi_hint_,  splash_pool_hint_);
+
 
   // ★スプラッシュ中はティッカーを消灯（黒で塗りつぶし）
   tick_.fillScreen(BLACK);
@@ -135,25 +136,19 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText) {
   uint32_t now = millis();
 
 
-  // ===== 起動スプラッシュの表示・遷移管理 =====
+   // ===== 起動スプラッシュの表示・遷移管理 =====
   if (splash_active_) {
     wl_status_t w = WiFi.status();
+    uint32_t    dt_splash = now - splash_start_ms_;
 
     // ★ "Connecting", "Connecting..", ... を行ったり来たりさせる
     auto makeConnecting = [&](const char* base) -> String {
       uint32_t elapsed = now - splash_start_ms_;
-
-      // 1ステップあたりの時間（お好みで 150〜300ms くらい）
       const uint32_t period = 200;  // 0.2秒ごとに変化
-
-      // 0,1,2,3,4,5 の6ステップで 1→2→3→4→3→2 と往復させる
       uint32_t phase = (elapsed / period) % 6;
       uint8_t dots;
-      if (phase <= 3) {
-        dots = 1 + phase;     // 1,2,3,4
-      } else {
-        dots = 6 - phase;     // 3,2
-      }
+      if (phase <= 3) dots = 1 + phase;  // 1,2,3,4
+      else            dots = 6 - phase;  // 3,2
 
       String s(base);
       for (uint8_t i = 0; i < dots; ++i) {
@@ -162,99 +157,89 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText) {
       return s;
     };
 
-
     // --- WiFi ライン ---
     String   wifiText;
     uint16_t wifiCol;
     if (w == WL_CONNECTED) {
       wifiText = "OK";
       wifiCol  = 0x07E0;    // 緑
+    } else if (dt_splash < 10000) {
+      wifiText = makeConnecting("Connecting");
+      wifiCol  = 0xFD20;    // オレンジ
+    } else if (dt_splash < 15000) {
+      wifiText = makeConnecting("Retrying");
+      wifiCol  = 0xFD20;    // オレンジ
     } else {
-      uint32_t dt = now - splash_start_ms_;
-      if (dt < 10000) {
-        // ★ アニメーション付き "Connecting..."
-        wifiText = makeConnecting("Connecting");
-        wifiCol  = 0xFD20;  // オレンジ
-      } else {
-        wifiText = "NG";
-        wifiCol  = 0xF800;  // 赤
-      }
+      wifiText = "NG";
+      wifiCol  = 0xF800;    // 赤
     }
 
     // --- Pool ライン ---
     String   poolText;
     uint16_t poolCol;
-    uint32_t dt_splash = now - splash_start_ms_;
+    bool     wifi_ok = (w == WL_CONNECTED);
 
-    if (w != WL_CONNECTED) {
+    if (!wifi_ok) {
       // WiFi がまだならプールも待機扱い
       poolText = "Waiting";
       poolCol  = COL_LABEL;           // グレー
     } else if (p.poolAlive) {
-      // プールから仕事が来ている
+      // プールから仕事が来ている → マイニング可能
       poolText = "OK";
       poolCol  = 0x07E0;              // 緑
-    } else if (dt_splash < 15000) {
-      // ★タイムアウトまではずっと「Connecting...」
-      //   → NG を出したすぐ後に成功する見た目を避ける
+    } else if (dt_splash < 10000) {
       poolText = makeConnecting("Connecting");
       poolCol  = 0xFD20;              // オレンジ
+    } else if (dt_splash < 15000) {
+      poolText = makeConnecting("Retrying");
+      poolCol  = 0xFD20;              // オレンジ
     } else {
-      // 15秒経ってもダメなら NG
       poolText = "NG";
       poolCol  = 0xF800;              // 赤
     }
 
-
-
-    // --- Core ライン（M5Stack Core2 のざっくり自己チェック） ---
-    //   ・スプラッシュ表示から 0.5秒までは "Starting"
-    //   ・0.5秒を超えたら「本体とUIは起動済み」とみなして "OK"
-    String   sysText;
-    uint16_t sysCol;
-    uint32_t dt_core = now - splash_start_ms_;
-    if (dt_core < 500) {
-      sysText = "Starting";
-      sysCol  = 0xFD20;   // オレンジ
+    // --- 診断メッセージ（NGのときだけ出す） ---
+    String wifiHint;
+    if (wifiText == "NG" && p.wifiDiag.length()) {
+      wifiHint = p.wifiDiag;
     } else {
-      sysText = "OK";
-      sysCol  = 0x07E0;   // 緑
+      wifiHint = "";
     }
 
+    String poolHint;
+    if ((poolText == "NG" || poolText == "Waiting") && p.poolDiag.length()) {
+      poolHint = p.poolDiag;
+    } else {
+      poolHint = "";
+    }
 
     // --- 内容が変わったときだけ再描画（チラつき防止） ---
     if (wifiText  != splash_wifi_text_  || wifiCol  != splash_wifi_col_  ||
         poolText  != splash_pool_text_  || poolCol  != splash_pool_col_  ||
-        sysText   != splash_sys_text_   || sysCol   != splash_sys_col_) {
+        wifiHint  != splash_wifi_hint_  || poolHint != splash_pool_hint_) {
 
-      splash_wifi_text_ = wifiText;
-      splash_pool_text_ = poolText;
-      splash_sys_text_  = sysText;
-      splash_wifi_col_  = wifiCol;
-      splash_pool_col_  = poolCol;
-      splash_sys_col_   = sysCol;
+      splash_wifi_text_  = wifiText;
+      splash_pool_text_  = poolText;
+      splash_wifi_col_   = wifiCol;
+      splash_pool_col_   = poolCol;
+      splash_wifi_hint_  = wifiHint;
+      splash_pool_hint_  = poolHint;
 
-      drawSplash(splash_wifi_text_, splash_wifi_col_,
-                 splash_pool_text_, splash_pool_col_,
-                 splash_sys_text_,  splash_sys_col_);
+      drawSplash(splash_wifi_text_,  splash_wifi_col_,
+                 splash_pool_text_,  splash_pool_col_,
+                 splash_wifi_hint_,  splash_pool_hint_);
     }
 
-    // スプラッシュ中もティッカーは回す（目視ログ用）
-    //drawTicker(tickerText);
-
-    // いつスプラッシュを終わらせるか：
-    //  WiFi 接続 ＋ Pool alive ＋ 最低3秒経過 ＋
-    //  「全部 OK になってから 1 秒待つ」か、
-    //  それでもダメなら 15 秒でタイムアウト
+    // スプラッシュ終了条件:
+    // WiFi 接続 ＋ Pool alive ＋ 最低3秒経過 ＋
+    // 「全部 OK になってから 1 秒待つ」場合だけ遷移する
     bool ok_now = (w == WL_CONNECTED) && p.poolAlive;
 
     if (ok_now) {
       if (splash_ready_ms_ == 0) {
-        // 初めて全部 OK になった瞬間を記録
         splash_ready_ms_ = now;
       }
     } else {
-      // どれかが NG になったらリセット（ほぼ無い想定だが念のため）
       splash_ready_ms_ = 0;
     }
 
@@ -264,13 +249,10 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText) {
       (splash_ready_ms_ != 0) &&
       (now - splash_ready_ms_ > 1000);        // 全OKから1秒の余韻
 
-    bool timeout = (now - splash_start_ms_ > 15000);
-
-    if (!ready && !timeout) {
-      // まだスプラッシュ中
+    if (!ready) {
+      // ★ OK 以外では絶対に抜けない（NG のときはこのまま）
       return;
     }
-
 
     // ここまで来たら通常画面へ
     splash_active_ = false;
@@ -279,6 +261,7 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText) {
     drawStaticFrame();
     // このまま下の通常描画フローに落ちる
   }
+
 
   // ===== ここから通常ダッシュボード描画 =====
 
@@ -442,12 +425,12 @@ UIMining::TextLayoutY UIMining::computeTextLayoutY() const {
 
 void UIMining::drawSplash(const String& wifiText,  uint16_t wifiCol,
                           const String& poolText,  uint16_t poolCol,
-                          const String& sysText,   uint16_t sysCol) {
+                          const String& wifiHint,  const String& poolHint) {
   auto& d = M5.Display;
 
-  // ★画面全体はクリアしない（チラつき防止のため fillScreen は呼ばない）
+  // 画面全体はクリアしない（チラつき防止のため fillScreen は呼ばない）
 
-  // 枠線だけ上書きしておく（左上の文字列は表示しない）
+  // 枠線だけ上書きしておく
   d.drawFastVLine(X_INF, 0, INF_H, 0x18C3);
   d.drawFastHLine(0, Y_LOG - 1, W, 0x18C3);
 
@@ -465,13 +448,13 @@ void UIMining::drawSplash(const String& wifiText,  uint16_t wifiCol,
   d.clearClipRect();
 #endif
 
-  // 右側：タイトル + WiFi / Pool / Core
+  // 右側：タイトル + WiFi / Pool + バージョン + 診断
   info_.fillScreen(BLACK);
   info_.setFont(&fonts::Font0);
 
   int y = 4;
 
-  // ★大きいタイトル "Mining-Stackchan" を 2行で描画
+  // 大きいタイトル "Mining-Stackchan" を 2行で描画
   info_.setTextSize(2);
   info_.setTextColor(WHITE, BLACK);
 
@@ -481,14 +464,16 @@ void UIMining::drawSplash(const String& wifiText,  uint16_t wifiCol,
     if (x < PAD_LR) x = PAD_LR;
     info_.setCursor(x, y);
     info_.print(s);
-    y += 18;  // 高さ + 少し行間
+    y += 18;
   };
 
   drawCenter("Mining-");
   drawCenter("Stackchan");
-  y += 6;  // タイトルとステータス群の間にちょっと隙間
+  y += 6;  // タイトルとステータス群の間に隙間
 
-  auto drawGroup = [&](const char* label, const String& status, uint16_t col) {
+  // WiFi / Pool の1グループを描く
+  auto drawGroup = [&](const char* label, const String& status, uint16_t col,
+                       const String& hint) {
     // ラベル行（小さめ）
     info_.setTextSize(1);
     info_.setTextColor(COL_LABEL, BLACK);
@@ -504,15 +489,97 @@ void UIMining::drawSplash(const String& wifiText,  uint16_t wifiCol,
     if (sx < PAD_LR) sx = PAD_LR;
     info_.setCursor(sx, y);
     info_.print(status);
-    y += 22;  // 高さ + 行間
+    y += 22;
+
+    // 診断メッセージ（小さめ・左寄せ／最大2行）
+    if (hint.length()) {
+      info_.setTextSize(1);
+      info_.setTextColor(COL_LABEL, BLACK);
+
+      int max_w = INF_W - PAD_LR * 2;
+
+      // 単語ごとに行を詰めていく簡易ワードラップ（英語前提）
+      auto fillLine = [&](String& src, String& dest) {
+        dest = "";
+        while (src.length()) {
+          int spacePos = src.indexOf(' ');
+          String word;
+          if (spacePos == -1) {
+            // 最後の単語
+            word = src;
+            src  = "";
+          } else {
+            // 先頭の単語 + スペースまで
+            word = src.substring(0, spacePos + 1);
+            src.remove(0, spacePos + 1);
+          }
+
+          String candidate = dest + word;
+          if (info_.textWidth(candidate) > max_w) {
+            if (dest.length() == 0) {
+              // 1単語だけでオーバーする場合はそのまま切る
+              dest = candidate;
+            } else {
+              // 入りきらなかった単語は次の行に回す
+              src = word + src;
+            }
+            break;
+          }
+          dest = candidate;
+        }
+        dest.trim();
+      };
+
+      String remaining = hint;
+      String line1, line2;
+
+      // 1行目を作る
+      fillLine(remaining, line1);
+      // まだ文字が残っていれば2行目を作る
+      if (remaining.length()) {
+        fillLine(remaining, line2);
+      }
+
+      // 1行目
+      if (line1.length()) {
+        info_.setCursor(PAD_LR, y);
+        info_.print(line1);
+        y += 12;
+      }
+
+      // 2行目（あれば）
+      if (line2.length()) {
+        info_.setCursor(PAD_LR, y);
+        info_.print(line2);
+        y += 12;
+      }
+
+      y += 2;  // グループとの隙間をちょっとだけ追加
+    }
+
+
+    y += 4;  // グループ間の余白
   };
 
-  drawGroup("WiFi", wifiText, wifiCol);
-  drawGroup("Pool", poolText, poolCol);
-  drawGroup("Core", sysText,  sysCol);
+  drawGroup("WiFi", wifiText, wifiCol, wifiHint);
+  drawGroup("Pool", poolText, poolCol, poolHint);
+
+  // 右下にバージョン表記（例: v0.34）
+  info_.setTextSize(1);
+  info_.setTextColor(COL_LABEL, BLACK);
+
+  String ver = String("v") + app_ver_;
+  int tw = info_.textWidth(ver);
+  int vx = INF_W - PAD_LR - tw;
+  int vy = INF_H - 12;
+  if (vx < PAD_LR) vx = PAD_LR;
+
+  info_.setCursor(vx, vy);
+  info_.print(ver);
 
   info_.pushSprite(X_INF, 0);
 }
+
 
 
 void UIMining::drawSleepMessage() {
