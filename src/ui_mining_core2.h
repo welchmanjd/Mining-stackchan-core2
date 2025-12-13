@@ -96,6 +96,11 @@ public:
   void onEnterStackchanMode();
   void onLeaveStackchanMode();
 
+  // "何？" attention mode: short-lived focus state triggered by tap.
+  // durationMs==0 -> clear.
+  void triggerAttention(uint32_t durationMs, const char* text = "WHAT?");
+  bool isAttentionActive() const;
+
   // ★ 追加: 目線・まばたき・ゆらぎをまとめて更新
   void updateAvatarLiveliness();
 
@@ -192,6 +197,11 @@ private:
   uint32_t stackchan_phase_start_ms_ = 0;
   uint32_t stackchan_phase_dur_ms_   = 0;
   String   stackchan_bubble_text_;
+
+  // "attention" state ("WHAT?" mode)
+  bool     attention_active_    = false;
+  uint32_t attention_until_ms_  = 0;
+  String   attention_text_      = "WHAT?";
 
   // しゃべる/黙る時間（ms）
   uint32_t stackchan_talk_min_ms_   = 2500;

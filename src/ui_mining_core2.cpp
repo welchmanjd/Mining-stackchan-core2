@@ -138,6 +138,33 @@ void UIMining::onLeaveStackchanMode() {
   // ★ ここでも avatar_.stop() は呼ばない（そもそも start していない）
 }
 
+void UIMining::triggerAttention(uint32_t durationMs, const char* text) {
+  if (durationMs == 0) {
+    attention_active_   = false;
+    attention_until_ms_ = 0;
+    attention_text_     = "WHAT?";
+    // If we are in stackchan mode, clear speech immediately.
+    if (in_stackchan_mode_) {
+      avatar_.setSpeechText("");
+    }
+    return;
+  }
+
+  attention_active_   = true;
+  attention_until_ms_ = millis() + durationMs;
+  attention_text_     = (text && *text) ? String(text) : String("WHAT?");
+
+  if (in_stackchan_mode_) {
+    avatar_.setSpeechText(attention_text_.c_str());
+  }
+}
+
+bool UIMining::isAttentionActive() const {
+  if (!attention_active_) return false;
+  // handle millis wrap-around safely
+  return (int32_t)(attention_until_ms_ - millis()) > 0;
+}
+
 
 
 void UIMining::drawAll(const PanelData& p, const String& tickerText) {
@@ -332,6 +359,28 @@ void UIMining::drawStackchanScreen(const PanelData& p) {
   // スタックチャン専用レイアウト（大きめ）
   avatar_.setScale(1.0f);
   avatar_.setPosition(0, 0);
+
+  // ===== Attention override ("WHAT?" mode) =====
+  if (attention_active_) {
+    if ((int32_t)(attention_until_ms_ - now) > 0) {
+      // Force a short bubble and keep the avatar responsive.
+      avatar_.setSpeechText(attention_text_.c_str());
+      stackchan_talking_ = true;
+
+      updateAvatarMood(p);
+      updateAvatarLiveliness();
+
+      d.setClipRect(0, 0, W, H);
+      avatar_.draw();
+      d.clearClipRect();
+      return;
+    }
+
+    // expired -> clear and restart normal speech cycle
+    attention_active_ = false;
+    avatar_.setSpeechText("");
+    stackchan_phase_dur_ms_ = 0;
+  }
 
   // ===== しゃべる / 黙る フェーズ制御 =====
   // - しゃべる: 吹き出し表示 + 口パク

@@ -24,6 +24,12 @@ static unsigned long lastUiMs = 0;
 // Aボタンで切り替える画面モード
 static bool g_stackchanMode = false;
 
+// "Attention" ("WHAT?") mode: short-lived focus state triggered by tap in Stackchan screen.
+static bool     g_attentionActive = false;
+static uint32_t g_attentionUntilMs = 0;
+static MiningYieldProfile g_savedYield = MiningYieldNormal();
+static bool     g_savedYieldValid = false;
+
 // ===== 自動スリープ関連 =====
 
 // 最後に「ユーザー入力」があった時刻 [ms]
@@ -189,11 +195,18 @@ void loop() {
     anyInput = true;
   }
 
-  // タッチ入力（押されている間は true）
+  // タッチ入力（短タップも拾えるように「押された瞬間」を検出）
+  static bool prevTouchPressed = false;
+  bool touchPressed = false;
+  bool touchDown    = false;
+
   auto& tp = M5.Touch;
   if (tp.isEnabled()) {
     auto det = tp.getDetail();
-    if (det.isPressed()) {
+    touchPressed = det.isPressed();
+    touchDown    = touchPressed && !prevTouchPressed;
+    prevTouchPressed = touchPressed;
+    if (touchPressed) {
       anyInput = true;
     }
   }
@@ -215,6 +228,8 @@ void loop() {
 
   // ここから「画面がON」の時の処理
 
+  UIMining& ui = UIMining::instance();
+
   if (anyInput) {
     lastInputMs = now;
   }
@@ -227,12 +242,55 @@ void loop() {
     g_stackchanMode = !g_stackchanMode;
     mc_logf("[MAIN] BtnA pressed, stackchanMode=%d", (int)g_stackchanMode);
 
-    UIMining& ui = UIMining::instance();
+    // (ui is already referenced above)
     if (g_stackchanMode) {
       ui.onEnterStackchanMode();
     } else {
       ui.onLeaveStackchanMode();
+
+      // Leaving stackchan mode -> clear attention + restore mining yield
+      if (g_attentionActive) {
+        g_attentionActive = false;
+        if (g_savedYieldValid) setMiningYieldProfile(g_savedYield);
+        ui.triggerAttention(0);
+      }
     }
+  }
+
+  // --- Attention mode: tap in Stackchan screen to go "WHAT?" and throttle mining ---
+  // NOTE: Right now we only apply "strong yield" (so mining continues but UI becomes very responsive).
+  // Future hooks:
+  //   - STOP: setMiningActiveThreads(0)
+  //   - HALF: setMiningActiveThreads(1)
+  if (g_stackchanMode && touchDown && !displaySleeping) {
+    const uint32_t dur = 3000; // ms
+    mc_logf("[ATTN] enter");
+
+    // save current yield once
+    if (!g_attentionActive) {
+      g_savedYield = getMiningYieldProfile();
+      g_savedYieldValid = true;
+    }
+
+    g_attentionActive = true;
+    g_attentionUntilMs = now + dur;
+
+    setMiningYieldProfile(MiningYieldStrong());
+    ui.triggerAttention(dur, "WHAT?");
+    M5.Speaker.tone(1800, 30);
+  }
+
+  // Attention timeout -> restore mining yield and clear bubble
+  if (g_attentionActive && (int32_t)(g_attentionUntilMs - now) <= 0) {
+    g_attentionActive = false;
+    mc_logf("[ATTN] exit");
+    
+    if (g_savedYieldValid) {
+      setMiningYieldProfile(g_savedYield);
+    } else {
+      setMiningYieldProfile(MiningYieldNormal());
+    }
+    ui.triggerAttention(0);
   }
 
 
@@ -251,7 +309,7 @@ void loop() {
     MiningSummary summary;
     updateMiningSummary(summary);
 
-    UIMining& ui = UIMining::instance();
+    // (ui is already referenced above)
     UIMining::PanelData data;
     buildPanelData(summary, ui, data);
 

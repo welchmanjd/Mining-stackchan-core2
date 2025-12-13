@@ -26,8 +26,8 @@ inline const AppConfig& appConfig() {
     MC_DUCO_MINER_KEY,
     "Mining-Stackchan-Core2",   // DUCO_RIG_NAME
     "M5StackCore2",             // DUCO_BANNER
-    "Mining-Stackchan Core2",   // APP_NAME
-    "0.38"                      // APP_VERSION
+    "Mining-Stackchan-Core2",   // APP_NAME
+    "0.39"                      // APP_VERSION
   };
   return cfg;
 }

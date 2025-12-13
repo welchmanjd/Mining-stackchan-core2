@@ -45,3 +45,33 @@ void startMiner();
 
 // スレッドごとの統計を集計して UI 用のサマリに詰める
 void updateMiningSummary(MiningSummary& out);
+
+// ===== Mining control (for "attention mode" etc.) =====
+// activeThreads:
+//   0 = stop/pause (all miners idle)
+//   1 = half (one miner thread)
+//   2 = full (default)
+// yieldProfile:
+//   every N nonces -> vTaskDelay(delay_ms)
+//   ※ every should be power-of-two for best speed (e.g. 1024, 256, 64)
+struct MiningYieldProfile {
+  uint16_t every;
+  uint8_t  delay_ms;
+
+  // NOTE: PlatformIO(ESP32/Arduino) の toolchain は gnu++11 になっていることが多い。
+  // C++11 だと「メンバ初期化子付きstruct」は aggregate 扱いにならず
+  // `return {1024,1};` がコンパイルできない。
+  // なので constexpr ctor を用意して、どの標準でも確実に初期化できるようにする。
+  constexpr MiningYieldProfile(uint16_t every_ = 1024, uint8_t delay_ms_ = 1)
+    : every(every_), delay_ms(delay_ms_) {}
+};
+
+void setMiningActiveThreads(uint8_t activeThreads);
+uint8_t getMiningActiveThreads();
+
+void setMiningYieldProfile(MiningYieldProfile p);
+MiningYieldProfile getMiningYieldProfile();
+
+// Convenience presets
+inline MiningYieldProfile MiningYieldNormal() { return MiningYieldProfile(1024, 1); }
+inline MiningYieldProfile MiningYieldStrong() { return MiningYieldProfile(64,  3); }

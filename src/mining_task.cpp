@@ -9,6 +9,9 @@
 #include <ArduinoJson.h>
 #include <mbedtls/sha1.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 
 
 
@@ -50,6 +53,22 @@ static char     g_chip_id[16] = {0};
 static int      g_walletid = 0;
 // ★追加: プールの診断メッセージ（UIに渡す用）
 static String   g_poolDiagText = "";
+
+// ===== mining control knobs (for attention mode etc.) =====
+static volatile uint8_t  g_mining_active_threads = DUCO_MINER_THREADS; // 0..DUCO_MINER_THREADS
+static volatile uint16_t g_yield_every = 1024;   // power-of-two recommended
+static volatile uint8_t  g_yield_ms    = 1;      // delay in ms at yield points
+
+static inline uint16_t normalize_pow2(uint16_t v) {
+  if (v < 8) v = 8;
+  uint16_t p = 1;
+  while ((uint16_t)(p << 1) != 0 && (uint16_t)(p << 1) <= v) p <<= 1;
+  return p;
+}
+
+// Solver abort marker (distinct from "not found")
+static const uint32_t DUCO_ABORTED = UINT32_MAX - 1;
+
 
 
 // ---------------- プール情報取得 ----------------
@@ -144,7 +163,12 @@ static uint32_t duco_solve_duco_s1(const String& seed,
   char* nonce_ptr = buf + seed_len;
 
   unsigned char out[20];
-  const uint32_t YIELD_MASK = 0x3FF;  // 1024回ごと
+
+// thread index (0/1..) for control checks
+const int tidx = (stats) ? int(stats - g_thr) : -1;
+if (tidx >= 0 && tidx >= (int)g_mining_active_threads) {
+  return DUCO_ABORTED;
+}
 
   for (uint32_t nonce = 0; nonce <= maxNonce; ++nonce) {
     int nlen = u32_to_dec(nonce_ptr, nonce);
@@ -168,8 +192,10 @@ static uint32_t duco_solve_duco_s1(const String& seed,
       return nonce;
     }
 
-    // ★一定間隔で「いま計算してる値」をスナップショット
-    if ((nonce & YIELD_MASK) == 0) {
+    // ★一定間隔で「いま計算してる値」をスナップショット + yield + control point
+    uint16_t every = g_yield_every;
+    uint32_t mask  = (every >= 1) ? (uint32_t)(every - 1) : 0xFFFFFFFFu;
+    if ((nonce & mask) == 0) {
       if (stats) {
         portENTER_CRITICAL(&g_statsMux);
         stats->work_nonce     = nonce;
@@ -178,7 +204,14 @@ static uint32_t duco_solve_duco_s1(const String& seed,
         stats->work_valid = true;
         portEXIT_CRITICAL(&g_statsMux);
       }
-      vTaskDelay(1 / portTICK_PERIOD_MS);
+
+      // If this thread got disabled mid-job, abort cleanly.
+      if (tidx >= 0 && tidx >= (int)g_mining_active_threads) {
+        return DUCO_ABORTED;
+      }
+
+      uint8_t dms = g_yield_ms;
+      if (dms) vTaskDelay(pdMS_TO_TICKS(dms));
     }
   }
   return UINT32_MAX;
@@ -198,19 +231,34 @@ static void duco_task(void* pv) {
   const auto& cfg = appConfig();
 
   for (;;) {
+    // ----- mining control: idle if this thread is disabled (STOP/HALF) -----
+    if (idx >= (int)g_mining_active_threads) {
+      me.connected   = false;
+      me.hashrate_kh = 0.0f;
+      vTaskDelay(pdMS_TO_TICKS(200));
+      continue;
+    }
+
     // WiFi
     while (WiFi.status() != WL_CONNECTED) {
+      // disabled while waiting for WiFi -> just idle
+      if (idx >= (int)g_mining_active_threads) {
+        me.connected   = false;
+        me.hashrate_kh = 0.0f;
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
       me.connected = false;
       g_status = "WiFi connecting...";
       g_poolDiagText = "Waiting for WiFi connection.";           // ★追加
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
     // Pool
     if (g_port == 0) {
       if (!duco_get_pool()) {
         // duco_get_pool() 内で g_poolDiagText を設定済み
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(5000));
         continue;
       }
     }
@@ -222,19 +270,19 @@ static void duco_task(void* pv) {
     if (!cli.connect(g_host.c_str(), g_port)) {
       me.connected = false;
       g_poolDiagText = "Cannot connect to the pool node.";   // ★追加
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      vTaskDelay(pdMS_TO_TICKS(1000));
       continue;
     }
 
     // banner
     unsigned long t0 = millis();
     while (!cli.available() && cli.connected() && millis() - t0 < 5000) {
-      vTaskDelay(10 / portTICK_PERIOD_MS);
+      vTaskDelay(pdMS_TO_TICKS(10));
     }
     if (!cli.available()) {
       cli.stop();
       g_poolDiagText = "Pool node is not responding.";     // ★追加
-      vTaskDelay(2000 / portTICK_PERIOD_MS);
+      vTaskDelay(pdMS_TO_TICKS(2000));
       continue;
     }
     String serverVer = cli.readStringUntil('\n');
@@ -250,6 +298,16 @@ static void duco_task(void* pv) {
 
     // ===== JOB loop =====
     while (cli.connected()) {
+      // disabled mid-connection -> disconnect and go idle
+      if (idx >= (int)g_mining_active_threads) {
+        mc_logf("[DUCO-%s] disabled -> disconnect", tag);
+        cli.stop();
+        me.connected   = false;
+        me.hashrate_kh = 0.0f;
+        vTaskDelay(pdMS_TO_TICKS(200));
+        break;
+      }
+
       // Request job（user, board, miningKey）
       // Request job（user, board, miningKey）
       // NOTE:
@@ -271,7 +329,7 @@ static void duco_task(void* pv) {
       // job を待つ
       t0 = millis();
       while (!cli.available() && cli.connected() && millis() - t0 < 10000) {
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(10));
       }
       if (!cli.available()) {
         me.connected = false;
@@ -336,6 +394,16 @@ static void duco_task(void* pv) {
       uint32_t foundNonce =
           duco_solve_duco_s1(prev, expBytes, (uint32_t)difficulty, hashes, &me);
 
+      if (foundNonce == DUCO_ABORTED) {
+        // mining control requested to stop this thread
+        mc_logf("[DUCO-%s] job aborted by control", tag);
+        cli.stop();
+        me.connected   = false;
+        me.hashrate_kh = 0.0f;
+        vTaskDelay(pdMS_TO_TICKS(200));
+        break;
+      }
+
       float sec = (micros() - tStart) / 1000000.0f;
       if (sec <= 0) sec = 0.001f;
       float hps = hashes / (sec > 0 ? sec : 0.001f);
@@ -351,7 +419,7 @@ static void duco_task(void* pv) {
 
       if (foundNonce == UINT32_MAX) {
         g_status = String("no share (") + tag + ")";
-        vTaskDelay(5 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(5));
         continue;
       }
 
@@ -375,7 +443,7 @@ static void duco_task(void* pv) {
       // feedback
       t0 = millis();
       while (!cli.available() && cli.connected() && millis() - t0 < 10000) {
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(10));
       }
       if (!cli.available()) {
         g_status = String("no feedback (") + tag + ")";
@@ -408,12 +476,12 @@ static void duco_task(void* pv) {
         // BAD のときはとりあえず直ちにPoolエラー扱いにはしない
       }
 
-      vTaskDelay(5 / portTICK_PERIOD_MS);
+      vTaskDelay(pdMS_TO_TICKS(5));
     }
 
     cli.stop();
     me.connected = false;
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(2000));
   }
 }
 
@@ -540,3 +608,28 @@ void updateMiningSummary(MiningSummary& out) {
 
 }
 
+
+
+// ===== Mining control API (public) =====
+void setMiningActiveThreads(uint8_t activeThreads) {
+  if (activeThreads > DUCO_MINER_THREADS) activeThreads = DUCO_MINER_THREADS;
+  g_mining_active_threads = activeThreads;
+}
+
+uint8_t getMiningActiveThreads() {
+  return g_mining_active_threads;
+}
+
+void setMiningYieldProfile(MiningYieldProfile p) {
+  // normalize 'every' to power-of-two (fast bitmask check)
+  p.every = normalize_pow2(p.every);
+  g_yield_every = p.every;
+  g_yield_ms    = p.delay_ms;
+}
+
+MiningYieldProfile getMiningYieldProfile() {
+  MiningYieldProfile p;
+  p.every    = g_yield_every;
+  p.delay_ms = g_yield_ms;
+  return p;
+}
