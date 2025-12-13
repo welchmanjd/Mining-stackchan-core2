@@ -102,8 +102,14 @@ void UIMining::onEnterStackchanMode() {
   in_stackchan_mode_     = true;
   stackchan_needs_clear_ = true;
 
+  // 「しゃべる/黙る」状態をリセット
+  stackchan_talking_        = false;
+  stackchan_phase_start_ms_ = millis();
+  stackchan_phase_dur_ms_   = 0;   // 次の drawStackchanScreen() で開始
+  stackchan_bubble_text_    = "";
+
   // スタックチャン画面ではフルスクリーン寄りレイアウト
-  avatar_.setScale(1.0f);  // 好みで後で微調整
+  avatar_.setScale(1.0f);
   avatar_.setPosition(0, 0);
 
   // 画面切り替え直後は無言。テキストは drawStackchanScreen 側で更新
@@ -112,11 +118,15 @@ void UIMining::onEnterStackchanMode() {
 }
 
 
-
-
 void UIMining::onLeaveStackchanMode() {
   in_stackchan_mode_     = false;
   stackchan_needs_clear_ = false;
+
+  // 念のため「しゃべる/黙る」状態を停止
+  stackchan_talking_        = false;
+  stackchan_phase_start_ms_ = 0;
+  stackchan_phase_dur_ms_   = 0;
+  stackchan_bubble_text_    = "";
 
   // 吹き出しを消しておく
   avatar_.setSpeechText("");
@@ -127,8 +137,6 @@ void UIMining::onLeaveStackchanMode() {
 
   // ★ ここでも avatar_.stop() は呼ばない（そもそも start していない）
 }
-
-
 
 
 
@@ -297,10 +305,6 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText) {
 }
 
 
-
-
-
-
 void UIMining::drawStackchanScreen(const PanelData& p) {
   auto& d = M5.Display;
   uint32_t now = millis();
@@ -312,6 +316,11 @@ void UIMining::drawStackchanScreen(const PanelData& p) {
   }
   lastFrameMs = now;
 
+  auto randAdd = [](uint32_t var) -> uint32_t {
+    return (var > 0) ? (uint32_t)random(0, (long)var + 1) : 0;
+  };
+
+
   // 最初の1フレームだけ前の画面を消す
   if (stackchan_needs_clear_) {
     d.fillScreen(BLACK);
@@ -322,31 +331,61 @@ void UIMining::drawStackchanScreen(const PanelData& p) {
   avatar_.setScale(1.0f);
   avatar_.setPosition(0, 0);
 
-  // 機嫌（口パク）は共通ロジックを利用
-  updateAvatarMood(p);
+  // ===== しゃべる / 黙る フェーズ制御 =====
+  // - しゃべる: 吹き出し表示 + 口パク
+  // - 黙る    : 吹き出し無し + 口は閉じる（表情・目線で可愛さを出す）
+  //
+  // しゃべる 2.5〜4.0秒 / 黙る 1.2〜3.0秒（ランダム）
+  if (stackchan_phase_dur_ms_ == 0) {
+    // 初回：すぐ喋り始める
+    stackchan_talking_        = true;
+    stackchan_phase_start_ms_ = now;
+    stackchan_phase_dur_ms_ = stackchan_talk_min_ms_ + randAdd(stackchan_talk_var_ms_);
 
-  // 目線・まばたき・呼吸を更新（ここをオリジナル準拠にする：後で書き換える）
-  updateAvatarLiveliness();
+    stackchan_bubble_text_ = buildStackchanBubble(p);
+    avatar_.setSpeechText(stackchan_bubble_text_.c_str());
+  } else if ((uint32_t)(now - stackchan_phase_start_ms_) >= stackchan_phase_dur_ms_) {
+    // フェーズ切り替え
+    stackchan_phase_start_ms_ = now;
 
-  // 吹き出しテキスト更新（約4秒ごと）
-  static uint32_t lastBubbleMs = 0;
-  static String bubbleText;
+    if (stackchan_talking_) {
+      // → 黙る
+      stackchan_talking_      = false;
+      stackchan_phase_dur_ms_ = stackchan_silent_min_ms_ + randAdd(stackchan_silent_var_ms_);
+      stackchan_bubble_text_  = "";
+      avatar_.setSpeechText("");
+    } else {
+      // → 喋る（新しいセリフを生成）
+      stackchan_talking_      = true;
+      stackchan_phase_dur_ms_ = stackchan_talk_min_ms_ + randAdd(stackchan_talk_var_ms_);
 
-  if (bubbleText.length() == 0 || now - lastBubbleMs > 4000) {
-    lastBubbleMs = now;
-    bubbleText   = buildStackchanBubble(p);     // マイニング情報から文言を生成
-    avatar_.setSpeechText(bubbleText.c_str());  // 吹き出し描画はライブラリに任せる
+      stackchan_bubble_text_  = buildStackchanBubble(p);
+      avatar_.setSpeechText(stackchan_bubble_text_.c_str());
+    }
   }
 
+  // 口パク（喋ってる時だけ）
+  updateAvatarMood(p);
+
+  // 目線・まばたき・呼吸を更新
+  updateAvatarLiveliness();
+
   // フルスクリーンにクリッピングして描画
-  d.setClipRect(0, 0, W, H);   // W=320, H=240 を使っているはず
+  d.setClipRect(0, 0, W, H);
   avatar_.draw();
   d.clearClipRect();
 }
 
 
 
-
+void UIMining::setStackchanSpeechTiming(uint32_t talkMinMs, uint32_t talkVarMs,
+                                        uint32_t silentMinMs, uint32_t silentVarMs) {
+  // 0 は許可（＝固定時間にできる）
+  stackchan_talk_min_ms_   = talkMinMs;
+  stackchan_talk_var_ms_   = talkVarMs;
+  stackchan_silent_min_ms_ = silentMinMs;
+  stackchan_silent_var_ms_ = silentVarMs;
+}
 
 
 // 吹き出しに入れるテキストをランダム生成

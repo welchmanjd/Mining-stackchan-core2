@@ -98,6 +98,12 @@ public:
 
   // ★ 追加: 目線・まばたき・ゆらぎをまとめて更新
   void updateAvatarLiveliness();
+
+  // しゃべる/黙る時間（ms）を外から調整できるようにする
+  void setStackchanSpeechTiming(uint32_t talkMinMs, uint32_t talkVarMs,
+                                uint32_t silentMinMs, uint32_t silentVarMs);
+
+
 private:
 
 
@@ -180,6 +186,18 @@ private:
   // 画面モード状態
   bool   in_stackchan_mode_   = false;  // 今スタックチャン画面か
   bool   stackchan_needs_clear_ = false; // 入った直後に1回だけ画面クリアするため
+
+  // スタックチャン「しゃべる/黙る」制御
+  bool     stackchan_talking_        = false;
+  uint32_t stackchan_phase_start_ms_ = 0;
+  uint32_t stackchan_phase_dur_ms_   = 0;
+  String   stackchan_bubble_text_;
+
+  // しゃべる/黙る時間（ms）
+  uint32_t stackchan_talk_min_ms_   = 2500;
+  uint32_t stackchan_talk_var_ms_   = 1500; // 0..var を加算
+  uint32_t stackchan_silent_min_ms_ = 1200;
+  uint32_t stackchan_silent_var_ms_ = 1800; // 0..var を加算
 
 
   // ---------- Static frame ----------

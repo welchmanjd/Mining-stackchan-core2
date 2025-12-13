@@ -148,6 +148,15 @@ void setup() {
   // ★ UI起動 & スプラッシュ表示
   UIMining::instance().begin(cfg.app_name, cfg.app_version);
 
+  // スタックチャン「喋る/黙る」時間設定（単位: ms）
+  // 喋る時間 = talkMin + 0〜talkVar の乱数加算
+  // 黙る時間 = silentMin + 0〜silentVar の乱数加算
+  UIMining::instance().setStackchanSpeechTiming(
+    2200, 1200,   // 喋る: 最短2200ms + (0〜1200ms) → 2.2〜3.4秒
+    900,  1400    // 黙る: 最短 900ms + (0〜1400ms) → 0.9〜2.3秒
+  );
+
+
   // タイマー類の初期化
   lastUiMs        = 0;
   lastInputMs     = millis();
@@ -248,31 +257,6 @@ void loop() {
 
     // ticker は Step1 の buildTicker(summary) のまま
     String ticker = buildTicker(summary);
-
-
-        // ★ WiFi 診断メッセージ
-    {
-      wl_status_t st = WiFi.status();
-      switch (st) {
-        case WL_CONNECTED:
-          data.wifiDiag = "WiFi connection is OK";
-          break;
-        case WL_NO_SSID_AVAIL:
-          data.wifiDiag = "SSID not found. Check the AP name and power.";
-          break;
-        case WL_CONNECT_FAILED:
-          data.wifiDiag = "Check the WiFi password and encryption settings.";
-          break;
-        default:
-          data.wifiDiag = "Check your router and signal strength.";
-          break;
-      }
-    }
-
-    // ★ Pool 診断メッセージ（mining_task から）
-    data.poolDiag = summary.poolDiag;
-    
-    //String ticker = buildTicker(summary);
 
 
     // ★ ここで画面を切り替え

@@ -79,8 +79,13 @@ void UIMining::drawTicker(const String& text) {
 // ===== Avatar mood =====
 
 void UIMining::updateAvatarMood(const PanelData& p) {
-  if (p.poolAlive && p.hr_kh > 0.1f) {
-    // 採掘中だけ口パクさせる
+  // 口パクは「喋ってる時だけ」に寄せる
+  // - ダッシュボード：常に無言（setSpeechText("")）なので口は閉じる
+  // - スタックチャン画面：しゃべる/黙るフェーズに合わせて口パク
+  (void)p; // 表情ロジック拡張用の引数（将来使う）
+
+  bool talking = in_stackchan_mode_ && stackchan_talking_;
+  if (talking) {
     float t = millis() * 0.02f;
     float mouth = 0.20f + 0.20f * (sinf(t) * 0.5f + 0.5f);
     avatar_.setMouthOpenRatio(mouth);
@@ -90,8 +95,6 @@ void UIMining::updateAvatarMood(const PanelData& p) {
   // 呼吸（ゆらぎ）は updateAvatarLiveliness() 側でまとめて行う
 }
 
-
-// ===== Avatar liveliness (blink / gaze / body wobble) =====
 
 // ===== Avatar liveliness (blink / gaze / breath) =====
 //
