@@ -4,7 +4,7 @@
 #include "config_private.h"   // ← 秘密情報はここから
 // 無操作スリープ秒数（config_private で未定義なら 60 秒）
 #ifndef MC_DISPLAY_SLEEP_SECONDS
-#define MC_DISPLAY_SLEEP_SECONDS 60
+#define MC_DISPLAY_SLEEP_SECONDS 600
 #endif
 
 struct AppConfig {
@@ -27,7 +27,7 @@ inline const AppConfig& appConfig() {
     "Mining-Stackchan-Core2",   // DUCO_RIG_NAME
     "M5StackCore2",             // DUCO_BANNER
     "Mining-Stackchan Core2",   // APP_NAME
-    "0.36"                      // APP_VERSION
+    "0.38"                      // APP_VERSION
   };
   return cfg;
 }

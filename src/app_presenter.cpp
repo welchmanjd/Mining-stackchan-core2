@@ -7,22 +7,34 @@
 #include "config.h"  // appConfig()
 
 String buildTicker(const MiningSummary& s) {
-  String t = s.logLine40;
+  String t;
+
+  // “本物の計算結果(out[20])” があるなら、それを主役にする
+  if (s.workHashHex[0] != '\0') {
+    // 40桁hex（SHA1の結果）
+    t += s.workHashHex;
+
+    // 何を解いてるか（prev + nonce）も本物として流す
+    if (s.workSeed[0] != '\0') {
+      t += "|";
+      t += s.workSeed;        // prev(最大40)
+      t += "|";
+      t += String(s.workNonce);  // nonce（/max や diff は付けない）
+    }
+
+    // ※ここで poolName や difficulty を足さない（固定/ダッシュボードで見える値は省く）
+    return t;
+  }
+
+  // フォールバック：まだスナップショットが無い時は、ログ行だけ流す（pool/diff等は入れない）
+  t = s.logLine40;
   t.replace('\n', ' ');
   t.replace('\r', ' ');
   t.trim();
-
-  // logLine40 があるなら区切りを入れる
-  if (t.length() > 0) t += "|";
-
-  t += "P:";  t += s.poolName;
-  t += "|A:"; t += String(s.accepted);
-  t += "|R:"; t += String(s.rejected);
-  t += "|HR:"; t += String(s.total_kh, 1); t += "k";
-  t += "|D:";  t += String(s.maxDifficulty);
-
   return t;
 }
+
+
 
 void buildPanelData(const MiningSummary& summary, UIMining& ui, UIMining::PanelData& data) {
   const auto& cfg = appConfig();

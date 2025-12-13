@@ -199,6 +199,12 @@ private:
   uint32_t stackchan_silent_min_ms_ = 1200;
   uint32_t stackchan_silent_var_ms_ = 1800; // 0..var を加算
 
+  // 機嫌度（-2..+2）: 採掘状況から計算して、表情/動きの強さに使う
+  int8_t   mood_level_        = 0;
+  uint32_t mood_last_calc_ms_ = 0;
+
+  // mood ログ用
+  uint32_t mood_last_report_ms_ = 0;   // 定期ログのタイマー
 
   // ---------- Static frame ----------
   void drawStaticFrame();

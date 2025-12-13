@@ -25,10 +25,20 @@ struct DucoThreadStats {
   uint32_t accepted     = 0;
   uint32_t rejected     = 0;
   float    last_ping_ms = 0.0f;
+  // ★追加: SHA1 演出用（実値）スナップショット
+  bool     work_valid      = false;
+  uint32_t work_nonce      = 0;
+  uint32_t work_max_nonce  = 0;
+  uint32_t work_diff       = 0;
+  uint8_t  work_out[20]    = {0};    // out[20] の生バイト
+  char     work_seed[41]   = {0};    // prev（最大40）
 };
 
 static DucoThreadStats   g_thr[DUCO_MINER_THREADS];
 static SemaphoreHandle_t g_shaMutex = nullptr;
+
+// ★追加：スナップショット共有の排他用（duco_task / solver / updateMiningSummary で共通）
+static portMUX_TYPE g_statsMux = portMUX_INITIALIZER_UNLOCKED;
 
 static String   g_node_name;
 static String   g_host;
@@ -118,10 +128,12 @@ static inline void sha1_calc(const unsigned char* data,
 }
 
 // ---------- solver: duco_s1（mbedTLS SHA1 + 固定バッファ） ----------
+// ★変更: stats を渡して「いま計算している out/nonce」をスナップショットする
 static uint32_t duco_solve_duco_s1(const String& seed,
-                                   const unsigned char* expected20,
-                                   uint32_t difficulty,
-                                   uint32_t& hashes_done) {
+                                  const unsigned char* expected20,
+                                  uint32_t difficulty,
+                                  uint32_t& hashes_done,
+                                  DucoThreadStats* stats) {
   const uint32_t maxNonce = difficulty * 100U;
   hashes_done = 0;
 
@@ -136,15 +148,42 @@ static uint32_t duco_solve_duco_s1(const String& seed,
 
   for (uint32_t nonce = 0; nonce <= maxNonce; ++nonce) {
     int nlen = u32_to_dec(nonce_ptr, nonce);
+
     if (g_shaMutex) xSemaphoreTake(g_shaMutex, portMAX_DELAY);
     sha1_calc((const unsigned char*)buf, seed_len + nlen, out);
     if (g_shaMutex) xSemaphoreGive(g_shaMutex);
+
     hashes_done++;
-    if (memcmp(out, expected20, 20) == 0) return nonce;
-    if ((nonce & YIELD_MASK) == 0) vTaskDelay(1 / portTICK_PERIOD_MS);
+
+    // ★一致チェック（見つかったら即返す）
+    if (memcmp(out, expected20, 20) == 0) {
+      if (stats) {
+        portENTER_CRITICAL(&g_statsMux);
+        stats->work_nonce     = nonce;
+        stats->work_max_nonce = maxNonce;
+        memcpy(stats->work_out, out, 20);
+        stats->work_valid = true;
+        portEXIT_CRITICAL(&g_statsMux);
+      }
+      return nonce;
+    }
+
+    // ★一定間隔で「いま計算してる値」をスナップショット
+    if ((nonce & YIELD_MASK) == 0) {
+      if (stats) {
+        portENTER_CRITICAL(&g_statsMux);
+        stats->work_nonce     = nonce;
+        stats->work_max_nonce = maxNonce;
+        memcpy(stats->work_out, out, 20);
+        stats->work_valid = true;
+        portEXIT_CRITICAL(&g_statsMux);
+      }
+      vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
   }
   return UINT32_MAX;
 }
+
 
 // ---------------- Miner Task 本体 ----------------
 static void duco_task(void* pv) {
@@ -261,6 +300,15 @@ static void duco_task(void* pv) {
       if (difficulty <= 0) difficulty = 1;
       me.difficulty = (uint32_t)difficulty;
 
+      // ★追加：演出用スナップショットの“お題”を保存（prev + difficulty）
+      portENTER_CRITICAL(&g_statsMux);
+      me.work_diff = (uint32_t)difficulty;
+      me.work_valid = false;  // 新ジョブ開始で一旦リセット
+      strncpy(me.work_seed, prev.c_str(), 40);
+      me.work_seed[40] = '\0';
+      portEXIT_CRITICAL(&g_statsMux);
+
+
      // ★ 追加：ジョブの中身をログ
      mc_logf("[DUCO-%s] job diff=%d prev=%s expected=%s",
           tag, difficulty,
@@ -286,7 +334,8 @@ static void duco_task(void* pv) {
       uint32_t hashes = 0;
       unsigned long tStart = micros();
       uint32_t foundNonce =
-          duco_solve_duco_s1(prev, expBytes, (uint32_t)difficulty, hashes);
+          duco_solve_duco_s1(prev, expBytes, (uint32_t)difficulty, hashes, &me);
+
       float sec = (micros() - tStart) / 1000000.0f;
       if (sec <= 0) sec = 0.001f;
       float hps = hashes / (sec > 0 ? sec : 0.001f);
@@ -402,7 +451,6 @@ void startMiner() {
 }
 
 // 集計だけ行い、UI に依存しない形で返す
-// 集計だけ行い、UI に依存しない形で返す
 void updateMiningSummary(MiningSummary& out) {
   float    total_kh = 0.0f;
   float    maxPing  = 0.0f;
@@ -441,5 +489,54 @@ void updateMiningSummary(MiningSummary& out) {
 
   // ★追加: プール診断メッセージ
   out.poolDiag = g_poolDiagText;
+  // ===== 演出用：SHA1(out) スナップショットを summary に詰める =====
+  auto hexDigit = [](uint8_t v) -> char {
+    return (v < 10) ? (char)('0' + v) : (char)('a' + (v - 10));
+  };
+
+  int wi_connected = -1;
+  int wi_any = -1;
+  for (int i = 0; i < DUCO_MINER_THREADS; ++i) {
+    if (g_thr[i].work_valid) {
+      if (wi_any < 0) wi_any = i;
+      if (g_thr[i].connected && wi_connected < 0) wi_connected = i;
+    }
+  }
+  int wi = (wi_connected >= 0) ? wi_connected : wi_any;
+
+  if (wi >= 0) {
+    uint8_t out20[20];
+    char seed40[41];
+    uint32_t nonce = 0, maxNonce = 0, diffv = 0;
+
+    portENTER_CRITICAL(&g_statsMux);
+    nonce   = g_thr[wi].work_nonce;
+    maxNonce= g_thr[wi].work_max_nonce;
+    diffv   = g_thr[wi].work_diff;
+    memcpy(out20, g_thr[wi].work_out, 20);
+    strncpy(seed40, g_thr[wi].work_seed, 40);
+    seed40[40] = '\0';
+    portEXIT_CRITICAL(&g_statsMux);
+
+    out.workThread     = (uint8_t)wi;
+    out.workNonce      = nonce;
+    out.workMaxNonce   = maxNonce;
+    out.workDifficulty = diffv;
+
+    strncpy(out.workSeed, seed40, 40);
+    out.workSeed[40] = '\0';
+
+    for (int j = 0; j < 20; ++j) {
+      out.workHashHex[j * 2 + 0] = hexDigit((out20[j] >> 4) & 0x0F);
+      out.workHashHex[j * 2 + 1] = hexDigit(out20[j] & 0x0F);
+    }
+    out.workHashHex[40] = '\0';
+  } else {
+    out.workThread = 255;
+    out.workNonce = out.workMaxNonce = out.workDifficulty = 0;
+    out.workSeed[0] = '\0';
+    out.workHashHex[0] = '\0';
+  }
+
 }
 

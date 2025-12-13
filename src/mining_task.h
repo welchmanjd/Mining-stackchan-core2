@@ -28,6 +28,15 @@ struct MiningSummary {
 
   // ★追加: プール接続に関する診断メッセージ
   String   poolDiag;
+
+  // ★追加: “本当に計算している” SHA1 演出用スナップショット
+  // workSeed + nonce(10進) を SHA1 した結果が workHashHex（40桁hex）
+  uint8_t  workThread      = 255;   // 0/1..（不明なら255）
+  uint32_t workNonce       = 0;     // 現在試している nonce
+  uint32_t workMaxNonce    = 0;     // difficulty*100
+  uint32_t workDifficulty  = 0;     // このスナップショットの difficulty
+  char     workSeed[41]    = {0};   // prev（最大40文字 + '\0'）
+  char     workHashHex[41] = {0};   // out[20] を hex 化した40文字 + '\0'
 };
 
 

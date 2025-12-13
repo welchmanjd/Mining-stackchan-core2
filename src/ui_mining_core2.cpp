@@ -316,6 +316,8 @@ void UIMining::drawStackchanScreen(const PanelData& p) {
   }
   lastFrameMs = now;
 
+  updateLastShareClock(p);   // ★追加：機嫌度計算で lastShareAgeSec() を使うため
+
   auto randAdd = [](uint32_t var) -> uint32_t {
     return (var > 0) ? (uint32_t)random(0, (long)var + 1) : 0;
   };
