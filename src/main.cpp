@@ -13,6 +13,7 @@
 #include <esp32-hal-cpu.h>
 
 #include "ui_mining_core2.h"
+#include "app_presenter.h"
 #include "config.h"
 #include "mining_task.h"
 #include "logging.h"   // ← 他の #include と一緒に、ファイル先頭の方へ移動推奨
@@ -107,6 +108,10 @@ static void setupTimeNTP() {
              "time.google.com",
              "pool.ntp.org");
 }
+
+
+
+
 
 // ---------------- Arduino entry points ----------------
 void setup() {
@@ -239,27 +244,11 @@ void loop() {
 
     UIMining& ui = UIMining::instance();
     UIMining::PanelData data;
+    buildPanelData(summary, ui, data);
 
-    data.hr_kh     = summary.total_kh;
-    data.accepted  = summary.accepted;
-    data.rejected  = summary.rejected;
+    // ticker は Step1 の buildTicker(summary) のまま
+    String ticker = buildTicker(summary);
 
-    data.rej_pct   = (summary.accepted + summary.rejected)
-                       ? (100.0f * summary.rejected /
-                          (float)(summary.accepted + summary.rejected))
-                       : 0.0f;
-
-    data.bestshare = -1.0f;
-    data.poolAlive = summary.anyConnected;
-    data.diff      = (float)summary.maxDifficulty;
-
-    data.ping_ms   = summary.maxPingMs;
-
-    data.elapsed_s = ui.uptimeSeconds();
-    data.sw        = appConfig().app_version;
-    data.fw        = ui.shortFwString();
-    data.poolName  = summary.poolName;
-    data.worker    = appConfig().duco_rig_name;
 
         // ★ WiFi 診断メッセージ
     {
@@ -283,17 +272,8 @@ void loop() {
     // ★ Pool 診断メッセージ（mining_task から）
     data.poolDiag = summary.poolDiag;
     
-    String ticker = summary.logLine40;
-    ticker += " | POOL ";
-    ticker += summary.poolName;
-    ticker += " | A ";
-    ticker += String(summary.accepted);
-    ticker += " R ";
-    ticker += String(summary.rejected);
-    ticker += " | HR ";
-    ticker += String(summary.total_kh, 1);
-    ticker += "kH/s | D ";
-    ticker += String(summary.maxDifficulty);
+    //String ticker = buildTicker(summary);
+
 
     // ★ ここで画面を切り替え
     if (g_stackchanMode) {

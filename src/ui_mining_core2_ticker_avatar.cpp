@@ -16,7 +16,7 @@ void UIMining::drawTicker(const String& text) {
     ticker_last_ = incoming;
 
     if (ticker_log_.length() > 0) {
-      ticker_log_ += "  |  ";   // 区切り
+      ticker_log_ += "|";       // 区切り（短く統一）
     }
     ticker_log_ += incoming;
 
