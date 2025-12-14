@@ -343,6 +343,17 @@ void AzureTts::begin(uint8_t volume) {
 
   // keep-alive session init
   keepaliveEnabled_ = (MC_AZ_TTS_KEEPALIVE != 0);
+
+  cfg_.keepAlive = keepaliveEnabled_;
+  cfg_.httpTimeoutMs = 20000;
+  cfg_.bodyStartTimeoutMs = 900;
+  cfg_.chunkTotalTimeoutMs = 15000;
+  cfg_.chunkSizeLineTimeoutMs = 3000;
+  cfg_.chunkDataIdleTimeoutMs = 5000;
+  cfg_.contentReadIdleTimeoutMs = 20000;
+
+  playbackEnabled_ = true;
+
   client_.setInsecure();
   // NOTE: setTimeout() is not available on all cores; HTTPClient timeout is used.
 }
@@ -350,6 +361,31 @@ void AzureTts::begin(uint8_t volume) {
 bool AzureTts::isBusy() const {
   return state_ == Fetching || state_ == Ready || state_ == Playing;
 }
+
+void AzureTts::setRuntimeConfig(const RuntimeConfig& cfg) {
+  cfg_ = cfg;
+  keepaliveEnabled_ = cfg_.keepAlive;
+}
+
+AzureTts::RuntimeConfig AzureTts::runtimeConfig() const {
+  return cfg_;
+}
+
+void AzureTts::setPlaybackEnabled(bool en) {
+  playbackEnabled_ = en;
+}
+
+bool AzureTts::playbackEnabled() const {
+  return playbackEnabled_;
+}
+
+AzureTts::LastResult AzureTts::lastResult() const {
+  return last_;
+}
+
+
+
+
 
 void AzureTts::requestSessionReset() {
   sessionResetPending_ = true;
@@ -370,6 +406,11 @@ void AzureTts::resetSession_() {
 
 bool AzureTts::speakAsync(const String& text, const char* voice) {
   if (isBusy()) return false;
+
+  // start new seq
+  last_ = LastResult();
+  last_.seq = ++seq_;
+  last_.keepAlive = keepaliveEnabled_;
 
   // safe point: handle pending reset
   if (sessionResetPending_) {
@@ -437,6 +478,15 @@ void AzureTts::poll() {
     logSpeaker_("pre-play");
     dumpHead16_(wav_, wavLen_);
 
+    if (!playbackEnabled_) {
+      // fetchだけ成功したらOKとして捌く（テスト用）
+      if (wav_) free(wav_);
+      wav_ = nullptr;
+      wavLen_ = 0;
+      state_ = Idle;
+      return;
+    }
+
     bool playOk = M5.Speaker.playWav(wav_, wavLen_, 1, 7, true);
     if (!playOk) {
       mc_logf("[TTS] playWav failed -> trying playRaw fallback");
@@ -494,12 +544,18 @@ void AzureTts::taskBody() {
 
   mc_logf("[TTS] fetch start (len=%d)", (int)text.length());
 
+  uint32_t t0 = millis();
   bool ok = fetchWav_(ssml, &buf, &len);
+  last_.fetchMs = millis() - t0;
   if (!ok) {
     mc_logf("[TTS] fetch failed");
     if (buf) free(buf);
     state_ = Error;
     task_ = nullptr;
+
+    if (last_.err[0] == '\0') strncpy(last_.err, "fetch_failed", sizeof(last_.err)-1);
+    last_.ok = false;
+
     return;
   }
 
@@ -507,6 +563,9 @@ void AzureTts::taskBody() {
 
   mc_logf("[TTS] fetch ok: %u bytes", (unsigned)len);
   dumpHead16_(buf, len);
+
+  last_.ok = true;
+  last_.bytes = (uint32_t)len;
 
   wav_    = buf;
   wavLen_ = len;
@@ -596,6 +655,9 @@ bool AzureTts::fetchWav_(const String& ssml, uint8_t** outBuf, size_t* outLen) {
         mc_logf("[TTS] body: %s", head.c_str());
       }
       https_.end();
+
+      last_.httpCode = httpCode;
+      strncpy(last_.err, "http", sizeof(last_.err)-1);
 
       // keep-aliveが壊れてる/切れてる時は 1回だけ作り直して再試行
       if (attempt == 0) {
@@ -688,6 +750,8 @@ bool AzureTts::fetchWav_(const String& ssml, uint8_t** outBuf, size_t* outLen) {
     // 2) Content-Length 不明: chunked を優先してデコード
     bool maybeChunked = (te.indexOf("chunked") >= 0);
 
+    last_.chunked = maybeChunked;
+
     // ヘッダが取れなかった場合でも、先頭1byteがHEXなら chunked の可能性が高い
     if (!maybeChunked) {
       int p = stream->peek();
@@ -703,6 +767,8 @@ bool AzureTts::fetchWav_(const String& ssml, uint8_t** outBuf, size_t* outLen) {
       https_.end();
       if (!ok2) {
         mc_logf("[TTS] chunked decode failed");
+        strncpy(last_.err, "chunk_timeout", sizeof(last_.err)-1);
+
         free(buf);
         // try again by resetting session once
         if (attempt == 0) {

@@ -30,6 +30,40 @@ public:
   // ※実際の破棄は安全なタイミング(Idle)で行う
   void requestSessionReset();
 
+  struct RuntimeConfig {
+    bool     keepAlive = true;
+    uint32_t httpTimeoutMs = 20000;
+    uint32_t bodyStartTimeoutMs = 900;
+
+    // chunked decode timeouts
+    uint32_t chunkTotalTimeoutMs = 15000;
+    uint32_t chunkSizeLineTimeoutMs = 3000;
+    uint32_t chunkDataIdleTimeoutMs = 5000;
+
+    // Content-Length read idle timeout
+    uint32_t contentReadIdleTimeoutMs = 20000;
+  };
+
+  struct LastResult {
+    uint32_t seq = 0;
+    bool ok = false;
+    bool chunked = false;
+    bool keepAlive = true;
+    int  httpCode = 0;
+    uint32_t bytes = 0;
+    uint32_t fetchMs = 0;
+    char err[24] = {0};
+  };
+
+  void setRuntimeConfig(const RuntimeConfig& cfg);
+  RuntimeConfig runtimeConfig() const;
+
+  void setPlaybackEnabled(bool en);
+  bool playbackEnabled() const;
+
+  LastResult lastResult() const;
+
+
 private:
   enum State : uint8_t { Idle, Fetching, Ready, Playing, Error };
 
@@ -70,5 +104,11 @@ private:
 
   uint32_t last_ok_ms_ = 0;                 // 最後に正常に音声を取れた時刻
   uint32_t disable_keepalive_until_ms_ = 0; // 失敗後しばらく keep-alive 禁止
+
+  RuntimeConfig cfg_;
+  bool playbackEnabled_ = true;
+
+  uint32_t seq_ = 0;
+  LastResult last_;
 
 };

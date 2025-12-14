@@ -48,7 +48,7 @@ inline const AppConfig& appConfig() {
     MC_AZ_TTS_VOICE,
 
     "Mining-Stackchan-Core2",   // APP_NAME
-    "0.42"                      // APP_VERSION
+    "0.431"                      // APP_VERSION
   };
   return cfg;
 }

@@ -19,12 +19,30 @@
 #include "logging.h"   // ← 他の #include と一緒に、ファイル先頭の方へ移動推奨
 #include "azure_tts.h"
 
+#include "app_test_mode.h"
+#include "ui_test_core2.h"
+
 
 // UI 更新用の前回時刻 [ms]
 static unsigned long lastUiMs = 0;
 
-// Aボタンで切り替える画面モード
-static bool g_stackchanMode = false;
+// 画面モードと切り替え
+enum AppMode : uint8_t {
+  MODE_DASH = 0,
+  MODE_STACKCHAN = 1,
+  MODE_TEST = 2,
+};
+
+static AppMode g_mode = MODE_DASH;
+static AppMode g_modeBeforeTest = MODE_DASH;
+
+// Test mode
+static AppTestMode g_test;
+static UITestCore2  g_testUi;
+
+// Test中はマイニングを強制pauseしたい（TTS再生中pauseとORで統合）
+static bool g_pauseMiningForTest = false;
+
 
 // "Attention" ("WHAT?") mode: short-lived focus state triggered by tap in Stackchan screen.
 static bool     g_attentionActive = false;
@@ -69,11 +87,11 @@ static void applyMiningPolicyForTts(bool ttsBusy) {
   (void)ttsBusy;
 
   const bool speaking = M5.Speaker.isPlaying();
-  const bool wantPause = speaking;   // ★ “再生中だけ”止める（取得中は止めない）
+  const bool wantPause = speaking || g_pauseMiningForTest;
 
   if (wantPause != s_pausedByTts) {
-    mc_logf("[TTS] mining pause: %d -> %d (speaking=%d)",
-            (int)s_pausedByTts, (int)wantPause, (int)speaking);
+    mc_logf("[TTS] mining pause: %d -> %d (speaking=%d test=%d)",
+            (int)s_pausedByTts, (int)wantPause, (int)speaking, (int)g_pauseMiningForTest);
 
     setMiningPaused(wantPause);      // ★ mining_task 側で実装（後述）
     s_pausedByTts = wantPause;
@@ -188,6 +206,10 @@ void setup() {
   // Azure TTS 初期化
   g_tts.begin();
 
+  //テスト枠を初期化
+  g_test.begin(&g_tts);
+  g_testUi.begin();
+
   // --- 画面の初期状態 ---
   M5.Display.setBrightness(DISPLAY_ACTIVE_BRIGHTNESS);
   M5.Display.fillScreen(BLACK);
@@ -250,11 +272,21 @@ void loop() {
   if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnC.wasPressed()) {
     anyInput = true;
   }
-  
+
+  // ★ wasPressed() は「読んだ瞬間に消費」されるので、必ず一度だけ読む
+  const bool btnA = M5.BtnA.wasPressed();
+  const bool btnB = M5.BtnB.wasPressed();
+  const bool btnC = M5.BtnC.wasPressed();
+  if (btnA || btnB || btnC) anyInput = true;
+
+
   // タッチ入力（短タップも拾えるように「押された瞬間」を検出）
   static bool prevTouchPressed = false;
   bool touchPressed = false;
   bool touchDown    = false;
+
+  int touchX = 0;
+  int touchY = 0;
 
   auto& tp = M5.Touch;
   if (tp.isEnabled()) {
@@ -263,9 +295,13 @@ void loop() {
     touchDown    = touchPressed && !prevTouchPressed;
     prevTouchPressed = touchPressed;
     if (touchPressed) {
+      touchX = det.x;
+      touchY = det.y;
       anyInput = true;
     }
   }
+
+
 
   // --- スリープ中の復帰処理 ---
   if (displaySleeping) {
@@ -283,44 +319,98 @@ void loop() {
 
 
   // ここから「画面がON」の時の処理
+  UIMining& ui = UIMining::instance();
+
+  // --- Cボタン：テスト画面へ（トグル） ---
+  if (btnC) {
+    M5.Speaker.tone(1500, 40);
+
+    if (g_mode != MODE_TEST) {
+      g_modeBeforeTest = g_mode;
+
+      // Stackchanから離脱するなら後始末（Attention解除も含む）
+      if (g_mode == MODE_STACKCHAN) {
+        ui.onLeaveStackchanMode();
+
+        if (g_attentionActive) {
+          g_attentionActive = false;
+          if (g_savedYieldValid) setMiningYieldProfile(g_savedYield);
+          ui.triggerAttention(0);
+        }
+      }
+
+      g_mode = MODE_TEST;
+      g_pauseMiningForTest = true;
+      g_test.enter(now);
+      g_testUi.markDirty();
+      mc_logf("[MAIN] BtnC pressed, enter TEST mode");
+
+    } else {
+      g_pauseMiningForTest = false;
+      g_test.exit(now);
+      g_mode = g_modeBeforeTest;
+      g_testUi.markDirty();
+      mc_logf("[MAIN] BtnC pressed, exit TEST mode -> mode=%d", (int)g_mode);
+
+      if (g_mode == MODE_STACKCHAN) {
+        ui.onEnterStackchanMode();
+      }
+    }
+  }
+
+  // --- Test mode：テスト画面だけ回して return ---
+  if (g_mode == MODE_TEST) {
+    TestInput tin;
+    tin.btnA = btnA; tin.btnB = btnB; tin.btnC = btnC;
+    tin.touchDown = touchDown;
+    tin.touchX = touchX;
+    tin.touchY = touchY;
+
+    g_test.update(now, tin);
+    g_testUi.draw(now, g_test.state());
+
+    delay(2);
+    return;
+  }
 
 
   // Bボタン：固定文を喋る（まずは動作確認用）
-  if (M5.BtnB.wasPressed()) {
+  if (btnB) {
     const char* text = "こんにちはマイニングスタックチャンです。";
     if (!g_tts.speakAsync(text)) {
       mc_logf("[TTS] speakAsync failed (busy / wifi / config?)");
     }
   }
 
-  UIMining& ui = UIMining::instance();
+
 
   if (anyInput) {
     lastInputMs = now;
   }
 
-  // --- Aボタン：画面モード切り替え + ビープ ---
-  // （スタックチャン画面に入る時も必ずピッと鳴る）
-  if (M5.BtnA.wasPressed()) {
-    M5.Speaker.tone(1500, 50);  // 他の場所と同じ 1500Hz / 50ms
 
-    g_stackchanMode = !g_stackchanMode;
-    mc_logf("[MAIN] BtnA pressed, stackchanMode=%d", (int)g_stackchanMode);
+  // --- Aボタン：ダッシュボード <-> スタックチャン + ビープ ---
+  if (btnA) {
+    M5.Speaker.tone(1500, 50);
 
-    // (ui is already referenced above)
-    if (g_stackchanMode) {
+    if (g_mode == MODE_DASH) {
+      g_mode = MODE_STACKCHAN;
       ui.onEnterStackchanMode();
-    } else {
+    } else if (g_mode == MODE_STACKCHAN) {
+      g_mode = MODE_DASH;
       ui.onLeaveStackchanMode();
 
-      // Leaving stackchan mode -> clear attention + restore mining yield
+      // Leaving stackchan -> clear attention + restore mining yield
       if (g_attentionActive) {
         g_attentionActive = false;
         if (g_savedYieldValid) setMiningYieldProfile(g_savedYield);
         ui.triggerAttention(0);
       }
     }
+
+    mc_logf("[MAIN] BtnA pressed, mode=%d", (int)g_mode);
   }
+
 
   // --- Attention mode: tap in Stackchan screen to go "WHAT?" and throttle mining ---
   // NOTE: Right now we only apply "strong yield" (so mining continues but UI becomes very responsive).
@@ -330,7 +420,7 @@ void loop() {
 
 
   // --- 4)C: pending があれば Azure TTS を開始（取りこぼしOK：最新優先） ---
-  if (g_stackchanMode && g_ttsPending.length() > 0 && !g_tts.isBusy()) {
+  if ((g_mode == MODE_STACKCHAN) && g_ttsPending.length() > 0 && !g_tts.isBusy()) {
     const uint32_t nowMs = millis();
 
     // 失敗で詰まらないように、最低 500ms 間隔で再試行
@@ -348,7 +438,7 @@ void loop() {
   }
 
 
-  if (g_stackchanMode && touchDown && !displaySleeping) {
+  if ((g_mode == MODE_STACKCHAN) && touchDown && !displaySleeping) {
     const uint32_t dur = 3000; // ms
     mc_logf("[ATTN] enter");
 
@@ -405,7 +495,7 @@ void loop() {
 
 
     // ★ ここで画面を切り替え
-    if (g_stackchanMode) {
+    if ((g_mode == MODE_STACKCHAN)) {
       ui.drawStackchanScreen(data);   // スタックチャン画面
 
       // --- 4)B: 吹き出し更新を検知して pending に積む ---
