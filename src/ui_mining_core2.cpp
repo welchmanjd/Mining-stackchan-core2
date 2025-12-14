@@ -143,7 +143,6 @@ void UIMining::triggerAttention(uint32_t durationMs, const char* text) {
     attention_active_   = false;
     attention_until_ms_ = 0;
     attention_text_     = "WHAT?";
-    // If we are in stackchan mode, clear speech immediately.
     if (in_stackchan_mode_) {
       avatar_.setSpeechText("");
     }
@@ -156,8 +155,13 @@ void UIMining::triggerAttention(uint32_t durationMs, const char* text) {
 
   if (in_stackchan_mode_) {
     avatar_.setSpeechText(attention_text_.c_str());
+
+    // ★TTS用：Attention「発動時」に通知
+    stackchan_speech_text_ = attention_text_;
+    stackchan_speech_seq_++;
   }
 }
+
 
 bool UIMining::isAttentionActive() const {
   if (!attention_active_) return false;
@@ -395,6 +399,11 @@ void UIMining::drawStackchanScreen(const PanelData& p) {
 
     stackchan_bubble_text_ = buildStackchanBubble(p);
     avatar_.setSpeechText(stackchan_bubble_text_.c_str());
+
+    // ★追加：TTS用に「新規発話」を通知
+    stackchan_speech_text_ = stackchan_bubble_text_;
+    stackchan_speech_seq_++;
+
   } else if ((uint32_t)(now - stackchan_phase_start_ms_) >= stackchan_phase_dur_ms_) {
     // フェーズ切り替え
     stackchan_phase_start_ms_ = now;
@@ -412,6 +421,10 @@ void UIMining::drawStackchanScreen(const PanelData& p) {
 
       stackchan_bubble_text_  = buildStackchanBubble(p);
       avatar_.setSpeechText(stackchan_bubble_text_.c_str());
+
+      // ★追加：TTS用に「新規発話」を通知
+      stackchan_speech_text_ = stackchan_bubble_text_;
+      stackchan_speech_seq_++;
     }
   }
 

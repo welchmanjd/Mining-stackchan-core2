@@ -80,7 +80,10 @@ static void applyMiningPolicyForTts(bool ttsBusy) {
   }
 }
 
-
+//TTS用
+static uint32_t g_lastSpeechSeq = 0;
+static String   g_ttsPending;
+static uint32_t g_ttsLastTryMs = 0;
 
 
 
@@ -324,6 +327,27 @@ void loop() {
   // Future hooks:
   //   - STOP: setMiningActiveThreads(0)
   //   - HALF: setMiningActiveThreads(1)
+
+
+  // --- 4)C: pending があれば Azure TTS を開始（取りこぼしOK：最新優先） ---
+  if (g_stackchanMode && g_ttsPending.length() > 0 && !g_tts.isBusy()) {
+    const uint32_t nowMs = millis();
+
+    // 失敗で詰まらないように、最低 500ms 間隔で再試行
+    if (g_ttsLastTryMs == 0 || (uint32_t)(nowMs - g_ttsLastTryMs) >= 500) {
+      g_ttsLastTryMs = nowMs;
+
+      if (g_tts.speakAsync(g_ttsPending)) {
+        mc_logf("[TTS] speak bubble (seq=%u)", (unsigned)g_lastSpeechSeq);
+        g_ttsPending = "";  // ★方針通り：喋り始めたら捨てる
+      } else {
+        mc_logf("[TTS] speakAsync failed (busy / wifi / config?)");
+        // pending は残るので、次のチャンスで再試行される
+      }
+    }
+  }
+
+
   if (g_stackchanMode && touchDown && !displaySleeping) {
     const uint32_t dur = 3000; // ms
     mc_logf("[ATTN] enter");
@@ -356,6 +380,7 @@ void loop() {
   }
 
 
+
   // --- 起動時の WiFi 接続 & NTP 同期（ノンブロッキング） ---
   bool wifiDone = wifi_connect();
   if (wifiDone && !g_timeNtpDone && WiFi.status() == WL_CONNECTED) {
@@ -382,6 +407,16 @@ void loop() {
     // ★ ここで画面を切り替え
     if (g_stackchanMode) {
       ui.drawStackchanScreen(data);   // スタックチャン画面
+
+      // --- 4)B: 吹き出し更新を検知して pending に積む ---
+      uint32_t seq = ui.stackchanSpeechSeq();
+      if (seq != 0 && seq != g_lastSpeechSeq) {
+        g_lastSpeechSeq = seq;
+        g_ttsPending    = ui.stackchanSpeechText();
+        g_ttsLastTryMs  = 0;  // すぐ喋りに行きたいのでリトライ待ちリセット
+        mc_logf("[TTS] bubble pending (seq=%u) %s", (unsigned)seq, g_ttsPending.c_str());
+      }
+
     } else {
       ui.drawAll(data, ticker);       // ダッシュボード画面
     }

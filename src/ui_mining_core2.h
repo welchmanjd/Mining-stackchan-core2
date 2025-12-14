@@ -108,6 +108,9 @@ public:
   void setStackchanSpeechTiming(uint32_t talkMinMs, uint32_t talkVarMs,
                                 uint32_t silentMinMs, uint32_t silentVarMs);
 
+  // --- 外部(TTS)向け：スタックチャン吹き出しの「新規発話」イベント ---
+  uint32_t stackchanSpeechSeq() const { return stackchan_speech_seq_; }
+  const String& stackchanSpeechText() const { return stackchan_speech_text_; }
 
 private:
 
@@ -197,6 +200,10 @@ private:
   uint32_t stackchan_phase_start_ms_ = 0;
   uint32_t stackchan_phase_dur_ms_   = 0;
   String   stackchan_bubble_text_;
+
+  // 外部(TTS)向け：新しい吹き出しが生成されたら seq++ して text を更新
+  uint32_t stackchan_speech_seq_ = 0;
+  String   stackchan_speech_text_;
 
   // "attention" state ("WHAT?" mode)
   bool     attention_active_    = false;
