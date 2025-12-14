@@ -17,6 +17,8 @@
 #include "config.h"
 #include "mining_task.h"
 #include "logging.h"   // ← 他の #include と一緒に、ファイル先頭の方へ移動推奨
+#include "azure_tts.h"
+
 
 // UI 更新用の前回時刻 [ms]
 static unsigned long lastUiMs = 0;
@@ -29,6 +31,9 @@ static bool     g_attentionActive = false;
 static uint32_t g_attentionUntilMs = 0;
 static MiningYieldProfile g_savedYield = MiningYieldNormal();
 static bool     g_savedYieldValid = false;
+
+// Azure TTS
+static AzureTts g_tts;
 
 // ===== 自動スリープ関連 =====
 
@@ -48,6 +53,48 @@ static const uint32_t DISPLAY_SLEEP_TIMEOUT_MS  =
 
 // スリープ前の「Zzz…」表示時間 [ms]
 static const uint32_t DISPLAY_SLEEP_MESSAGE_MS  = 5000UL;  // ここを変えれば好きな秒数に
+
+
+// ---- TTS中のマイニング制御（安全側） ----
+static int s_baseThreads = -1;     // 通常時のthreadsを記憶
+static int s_appliedThreads = -999;
+static uint32_t s_zeroSince = 0;
+
+static void applyMiningPolicyForTts(bool ttsBusy) {
+  if (s_baseThreads < 0) s_baseThreads = (int)getMiningActiveThreads(); // 通常は2のはず
+
+  const bool speaking = M5.Speaker.isPlaying();
+
+  // 方針：
+  //  - 再生中だけ 0（最強に安定）
+  //  - 取得中は 1（任意。通信が詰まりやすいなら効く）
+  //  - それ以外は元に戻す
+  int target = s_baseThreads;
+  if (speaking) target = 0;
+  else if (ttsBusy) target = 1;   // ←重い/詰まるなら有効。嫌ならコメントアウトして target=s_baseThreads
+
+  // 安全装置：しゃべってないのに 0 が続いたら強制復帰（失敗時の“止まりっぱなし”防止）
+  if (!speaking && getMiningActiveThreads() == 0) {
+    if (s_zeroSince == 0) s_zeroSince = millis();
+    if (millis() - s_zeroSince > 5000) {
+      mc_logf("[TTS] safety restore mining -> %d", s_baseThreads);
+      target = s_baseThreads;
+      s_zeroSince = 0;
+    }
+  } else {
+    s_zeroSince = 0;
+  }
+
+  if (target != s_appliedThreads) {
+    mc_logf("[TTS] mining threads: %d -> %d (busy=%d speaking=%d)",
+            (int)getMiningActiveThreads(), target, (int)ttsBusy, (int)speaking);
+    setMiningActiveThreads((uint8_t)target);
+    s_appliedThreads = target;
+  }
+}
+
+
+
 
 
 // ---------------- WiFi / Time ----------------
@@ -144,12 +191,17 @@ void setup() {
   M5.begin(cfg_m5);
   mc_logf("[MAIN] M5.begin() done");
 
+  // config（cfg を使う処理がこの後にあるので、ここで取っておく）
+  const auto& cfg = appConfig();
+
+  // Azure TTS 初期化
+  g_tts.begin();
+
   // --- 画面の初期状態 ---
   M5.Display.setBrightness(DISPLAY_ACTIVE_BRIGHTNESS);
   M5.Display.fillScreen(BLACK);
   M5.Display.setTextColor(WHITE, BLACK);
 
-  const auto& cfg = appConfig();
 
   // ★ UI起動 & スプラッシュ表示
   UIMining::instance().begin(cfg.app_name, cfg.app_version);
@@ -187,6 +239,19 @@ void loop() {
 
   unsigned long now = millis();
 
+  // TTSの再生開始/終了処理（スリープ中でも呼びたいので早めに）
+  g_tts.poll();
+  applyMiningPolicyForTts(g_tts.isBusy());
+
+  // Wi-Fi切断検知：keep-alive中のTLSセッションを次回に備えて破棄予約
+  static wl_status_t s_prevWifi = WL_IDLE_STATUS;
+  wl_status_t wifiNow = WiFi.status();
+  if (s_prevWifi == WL_CONNECTED && wifiNow != WL_CONNECTED) {
+    mc_logf("[WIFI] disconnected (status=%d) -> reset TTS session", (int)wifiNow);
+    g_tts.requestSessionReset();
+  }
+  s_prevWifi = wifiNow;
+
   // --- 入力検出（ボタン + タッチ） ---
   bool anyInput = false;
 
@@ -194,7 +259,7 @@ void loop() {
   if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnC.wasPressed()) {
     anyInput = true;
   }
-
+  
   // タッチ入力（短タップも拾えるように「押された瞬間」を検出）
   static bool prevTouchPressed = false;
   bool touchPressed = false;
@@ -227,6 +292,15 @@ void loop() {
 
 
   // ここから「画面がON」の時の処理
+
+
+  // Bボタン：固定文を喋る（まずは動作確認用）
+  if (M5.BtnB.wasPressed()) {
+    const char* text = "こんにちはマイニングスタックチャンです。";
+    if (!g_tts.speakAsync(text)) {
+      mc_logf("[TTS] speakAsync failed (busy / wifi / config?)");
+    }
+  }
 
   UIMining& ui = UIMining::instance();
 
@@ -284,7 +358,7 @@ void loop() {
   if (g_attentionActive && (int32_t)(g_attentionUntilMs - now) <= 0) {
     g_attentionActive = false;
     mc_logf("[ATTN] exit");
-    
+
     if (g_savedYieldValid) {
       setMiningYieldProfile(g_savedYield);
     } else {
@@ -335,6 +409,28 @@ void loop() {
 
     M5.Display.setBrightness(0);
     displaySleeping = true;
+  }
+
+
+
+  static bool    s_ttsThrottling = false;
+  static uint8_t s_savedThreads  = 0;  // 初期値は何でもOK（開始時に保存するので）
+
+
+  if (g_tts.isBusy()) {
+    if (!s_ttsThrottling) {
+      s_savedThreads = getMiningActiveThreads();
+      setMiningActiveThreads(MC_TTS_ACTIVE_THREADS_DURING_TTS);
+      s_ttsThrottling = true;
+      mc_logf("[TTS] mining throttle: threads %u -> %u",
+              (unsigned)s_savedThreads, (unsigned)MC_TTS_ACTIVE_THREADS_DURING_TTS);
+    }
+  } else {
+    if (s_ttsThrottling) {
+      setMiningActiveThreads(s_savedThreads);
+      s_ttsThrottling = false;
+      mc_logf("[TTS] mining restore: threads -> %u", (unsigned)s_savedThreads);
+    }
   }
 
 
