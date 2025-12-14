@@ -46,6 +46,11 @@ void startMiner();
 // スレッドごとの統計を集計して UI 用のサマリに詰める
 void updateMiningSummary(MiningSummary& out);
 
+// マイニングを「捨てずに」一時停止/再開する（JOB・接続は維持）
+void setMiningPaused(bool paused);
+bool isMiningPaused();
+
+
 // ===== Mining control (for "attention mode" etc.) =====
 // activeThreads:
 //   0 = stop/pause (all miners idle)

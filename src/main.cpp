@@ -60,38 +60,26 @@ static int s_baseThreads = -1;     // 通常時のthreadsを記憶
 static int s_appliedThreads = -999;
 static uint32_t s_zeroSince = 0;
 
+// ---- TTS中のマイニング制御（捨てない pause 版） ----
+// ポイント：スレッド数を 0 にしない（JOBを捨てない）
+// 再生中だけ「pause」して、終わったら再開する
+static bool s_pausedByTts = false;
+
 static void applyMiningPolicyForTts(bool ttsBusy) {
-  if (s_baseThreads < 0) s_baseThreads = (int)getMiningActiveThreads(); // 通常は2のはず
+  (void)ttsBusy;
 
   const bool speaking = M5.Speaker.isPlaying();
+  const bool wantPause = speaking;   // ★ “再生中だけ”止める（取得中は止めない）
 
-  // 方針：
-  //  - 再生中だけ 0（最強に安定）
-  //  - 取得中は 1（任意。通信が詰まりやすいなら効く）
-  //  - それ以外は元に戻す
-  int target = s_baseThreads;
-  if (speaking) target = 0;
-  else if (ttsBusy) target = 1;   // ←重い/詰まるなら有効。嫌ならコメントアウトして target=s_baseThreads
+  if (wantPause != s_pausedByTts) {
+    mc_logf("[TTS] mining pause: %d -> %d (speaking=%d)",
+            (int)s_pausedByTts, (int)wantPause, (int)speaking);
 
-  // 安全装置：しゃべってないのに 0 が続いたら強制復帰（失敗時の“止まりっぱなし”防止）
-  if (!speaking && getMiningActiveThreads() == 0) {
-    if (s_zeroSince == 0) s_zeroSince = millis();
-    if (millis() - s_zeroSince > 5000) {
-      mc_logf("[TTS] safety restore mining -> %d", s_baseThreads);
-      target = s_baseThreads;
-      s_zeroSince = 0;
-    }
-  } else {
-    s_zeroSince = 0;
-  }
-
-  if (target != s_appliedThreads) {
-    mc_logf("[TTS] mining threads: %d -> %d (busy=%d speaking=%d)",
-            (int)getMiningActiveThreads(), target, (int)ttsBusy, (int)speaking);
-    setMiningActiveThreads((uint8_t)target);
-    s_appliedThreads = target;
+    setMiningPaused(wantPause);      // ★ mining_task 側で実装（後述）
+    s_pausedByTts = wantPause;
   }
 }
+
 
 
 
@@ -411,25 +399,31 @@ void loop() {
     displaySleeping = true;
   }
 
-
-
-  static bool    s_ttsThrottling = false;
-  static uint8_t s_savedThreads  = 0;  // 初期値は何でもOK（開始時に保存するので）
-
+  // ---- TTS中のマイニング負荷制御（捨てない版） ----
+  // ・再生中: applyMiningPolicyForTts() が pause する（JOB維持）
+  // ・取得中/準備中: STOP(0)はJOBを捨てやすいので、ここでは yield 強化に留める
+  // ・Attention(WHAT?) が yield を管理している時は、そちらを優先する
+  static bool s_ttsYieldApplied = false;
+  static MiningYieldProfile s_ttsSavedYield = MiningYieldNormal();
+  static bool s_ttsSavedYieldValid = false;
 
   if (g_tts.isBusy()) {
-    if (!s_ttsThrottling) {
-      s_savedThreads = getMiningActiveThreads();
-      setMiningActiveThreads(MC_TTS_ACTIVE_THREADS_DURING_TTS);
-      s_ttsThrottling = true;
-      mc_logf("[TTS] mining throttle: threads %u -> %u",
-              (unsigned)s_savedThreads, (unsigned)MC_TTS_ACTIVE_THREADS_DURING_TTS);
+    if (!s_ttsYieldApplied && !g_attentionActive) {
+      s_ttsSavedYield = getMiningYieldProfile();
+      s_ttsSavedYieldValid = true;
+      setMiningYieldProfile(MiningYieldStrong());
+      s_ttsYieldApplied = true;
+      mc_logf("[TTS] mining yield: Strong");
     }
   } else {
-    if (s_ttsThrottling) {
-      setMiningActiveThreads(s_savedThreads);
-      s_ttsThrottling = false;
-      mc_logf("[TTS] mining restore: threads -> %u", (unsigned)s_savedThreads);
+    if (s_ttsYieldApplied && !g_attentionActive) {
+      if (s_ttsSavedYieldValid) {
+        setMiningYieldProfile(s_ttsSavedYield);
+      } else {
+        setMiningYieldProfile(MiningYieldNormal());
+      }
+      s_ttsYieldApplied = false;
+      mc_logf("[TTS] mining yield: restore");
     }
   }
 

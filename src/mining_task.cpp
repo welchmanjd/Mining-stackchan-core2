@@ -13,6 +13,22 @@
 #include "freertos/task.h"
 
 
+static volatile bool g_miningPaused = false;
+
+void setMiningPaused(bool paused) {
+  g_miningPaused = paused;
+}
+
+bool isMiningPaused() {
+  return g_miningPaused;
+}
+
+// “pause中はここで待つ” ユーティリティ（忙しいループに入れやすい）
+static inline void waitWhilePaused_() {
+  while (g_miningPaused) {
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
 
 
 // ---------------- Duino-Coin 固定値 ----------------
@@ -171,6 +187,16 @@ if (tidx >= 0 && tidx >= (int)g_mining_active_threads) {
 }
 
   for (uint32_t nonce = 0; nonce <= maxNonce; ++nonce) {
+    // ---- ★ Pause: keep current JOB, stop only the CPU-heavy loop ----
+    // When paused, we yield here and resume from the same nonce (no disconnect / no job drop).
+    if (g_miningPaused) {
+      waitWhilePaused_();
+      // If this thread got disabled while paused, abort cleanly.
+      if (tidx >= 0 && tidx >= (int)g_mining_active_threads) {
+        return DUCO_ABORTED;
+      }
+    }
+
     int nlen = u32_to_dec(nonce_ptr, nonce);
 
     if (g_shaMutex) xSemaphoreTake(g_shaMutex, portMAX_DELAY);
