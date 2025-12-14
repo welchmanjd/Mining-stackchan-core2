@@ -1,5 +1,6 @@
 #include "ui_mining_core2.h"
 #include "logging.h"
+#include "mining_task.h"
 
 // ===== Ticker =====
 
@@ -98,24 +99,26 @@ void UIMining::updateAvatarMood(const PanelData& p) {
       target = -2;
     } else if (!p.poolAlive) {
       target = -1;
+    } else if (isMiningPaused()) {          // ★ 追加：pause中は機嫌を凍結
+      target = mood_level_;                 //    （HR=0などの採掘要因で落とさない）
     } else {
       // 採掘が生きている前提で、細かく加点/減点
       int score = 0;
 
       // (1) 最後にシェアが動いた時間（古いほど不機嫌）
       uint32_t age = lastShareAgeSec();  // updateLastShareClock() が更新している前提
-      if (age <= 30)       score += 1;
-      else if (age <= 120) score += 0;
-      else if (age <= 300) score -= 1;
-      else                 score -= 2;
+        if (age <= 120)       score += 1;   // 2分以内に動いたらご機嫌
+        else if (age <= 300)  score += 0;   // 5分までは普通
+        else if (age <= 900)  score -= 1;   // 15分でちょい不機嫌
+        else                  score -= 2;   // 15分超えはヤバい扱い
 
       // (2) 成功率（Accepted / (Accepted+Rejected)）
       uint32_t total = p.accepted + p.rejected;
       if (total >= 10) {  // 少なすぎるとブレるので無視
         float success = 100.0f * (float)p.accepted / (float)total;
-        if (success >= 95.0f)      score += 1;
-        else if (success >= 90.0f) score += 0;
-        else if (success >= 70.0f) score -= 1;
+        if (success >= 85.0f)      score += 1;
+        else if (success >= 70.0f) score += 0;
+        else if (success >= 50.0f) score -= 1;
         else                       score -= 2;
       }
 
