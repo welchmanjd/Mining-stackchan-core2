@@ -145,15 +145,22 @@ static bool waitBodyStart_(WiFiClient* s, uint32_t timeoutMs) {
 
 
 // Transfer-Encoding: chunked をデコードして payload だけを outBuf に貯める
-static bool readChunked_(WiFiClient* s, uint8_t** outBuf, size_t* outLen) {
+// --- [REPLACE] readChunked_ (parameterized timeouts) ---
+static bool readChunked_(
+    WiFiClient* s,
+    uint8_t** outBuf,
+    size_t* outLen,
+    uint32_t totalTimeoutMs,
+    uint32_t sizeLineTimeoutMs,
+    uint32_t dataIdleTimeoutMs) {
+
   *outBuf = nullptr;
   *outLen = 0;
+  if (!s) return false;
 
-  const uint32_t kTotalTimeoutMs = 15000;   // 全体で15秒で諦める
   const uint32_t tStart = millis();
-
   auto expired = [&]() -> bool {
-    return (millis() - tStart) > kTotalTimeoutMs;
+    return (uint32_t)(millis() - tStart) > totalTimeoutMs;
   };
 
   size_t cap = 0, used = 0;
@@ -181,8 +188,8 @@ static bool readChunked_(WiFiClient* s, uint8_t** outBuf, size_t* outLen) {
   for (;;) {
     if (expired()) { mc_logf("[TTS] chunked: total timeout"); goto fail; }
 
-    // ★サイズ行は短めに待つ（ここで詰まると長時間停止するので）
-    if (!readLine_(s, line, sizeof(line), 3000)) {
+    // chunk-size line
+    if (!readLine_(s, line, sizeof(line), sizeLineTimeoutMs)) {
       mc_logf("[TTS] chunked: size line timeout");
       goto fail;
     }
@@ -195,8 +202,9 @@ static bool readChunked_(WiFiClient* s, uint8_t** outBuf, size_t* outLen) {
     if (semi) *semi = '\0';
 
     unsigned long chunk = strtoul(line, nullptr, 16);
+
     if (chunk == 0) {
-      // trailer headers（あってもなくてもOK）
+      // trailer headers (optional)
       for (;;) {
         if (expired()) break;
         if (!readLine_(s, line, sizeof(line), 2000)) break;
@@ -214,15 +222,15 @@ static bool readChunked_(WiFiClient* s, uint8_t** outBuf, size_t* outLen) {
     }
 
     size_t remain = (size_t)chunk;
-    uint32_t t0 = millis();
+    uint32_t lastDataMs = millis();
 
     while (remain > 0) {
       if (expired()) { mc_logf("[TTS] chunked: total timeout (data)"); goto fail; }
 
       int avail = s->available();
       if (avail <= 0) {
-        if ((millis() - t0) > 5000) { // ★データも5秒止まったら失敗
-          mc_logf("[TTS] chunked: data timeout remain=%u", (unsigned)remain);
+        if ((uint32_t)(millis() - lastDataMs) > dataIdleTimeoutMs) {
+          mc_logf("[TTS] chunked: data idle timeout remain=%u", (unsigned)remain);
           goto fail;
         }
         delay(1);
@@ -236,16 +244,16 @@ static bool readChunked_(WiFiClient* s, uint8_t** outBuf, size_t* outLen) {
       if (r > 0) {
         used += (size_t)r;
         remain -= (size_t)r;
-        t0 = millis();
+        lastDataMs = millis();
       } else {
         delay(1);
       }
     }
 
     // discard CRLF
-    uint32_t td = millis();
+    uint32_t t0 = millis();
     while (s->available() < 2) {
-      if (expired() || (millis() - td) > 2000) break;
+      if (expired() || (uint32_t)(millis() - t0) > 2000) break;
       delay(1);
     }
     if (s->available() >= 2) {
@@ -267,6 +275,7 @@ fail:
   if (buf) free(buf);
   return false;
 }
+
 
 
 struct WavPcmInfo {
@@ -334,29 +343,39 @@ static bool isHexByteLead_(int c) {
 
 // ---------------- AzureTts class ----------------
 
+// --- [REPLACE] AzureTts::begin ---
 void AzureTts::begin(uint8_t volume) {
-  (void)volume;  // マスター音量は触らない（タッチ音まで変わるため）
+  (void)volume;  // マスター音量は触らない
 
   endpoint_     = buildEndpointFromRegion_(MC_AZ_SPEECH_REGION);
   key_          = String(MC_AZ_SPEECH_KEY);
   defaultVoice_ = String(MC_AZ_TTS_VOICE);
 
-  // keep-alive session init
-  keepaliveEnabled_ = (MC_AZ_TTS_KEEPALIVE != 0);
+  // ★ 昨日の方針：TLS/HTTPの再利用はしない
+  keepaliveEnabled_ = false;
 
-  cfg_.keepAlive = keepaliveEnabled_;
-  cfg_.httpTimeoutMs = 20000;
-  cfg_.bodyStartTimeoutMs = 900;
-  cfg_.chunkTotalTimeoutMs = 15000;
-  cfg_.chunkSizeLineTimeoutMs = 3000;
-  cfg_.chunkDataIdleTimeoutMs = 5000;
-  cfg_.contentReadIdleTimeoutMs = 20000;
+  // ★ 昨日の推奨タイムアウト（WAVでも“gap”系は有効）
+  cfg_.keepAlive               = false;     // app_test_mode互換のため残すが、実装では常にOFF
+  cfg_.httpTimeoutMs           = 2000;      // POST全体の基準
+  cfg_.bodyStartTimeoutMs      = 1500;      // first byte
+  cfg_.chunkTotalTimeoutMs     = 20000;     // WAVは大きいので少し余裕（必要なら後で詰めよう）
+  cfg_.chunkSizeLineTimeoutMs  = 1500;
+  cfg_.chunkDataIdleTimeoutMs  = 550;       // chunk gap
+  cfg_.contentReadIdleTimeoutMs= 550;       // Content-Length時のgapも同じ扱い
 
   playbackEnabled_ = true;
 
+  // token/dns/rate-limit state
+  dnsWarmed_ = false;
+  token_ = "";
+  tokenExpireMs_ = 0;
+  preferOldSts_ = true;
+  lastRequestMs_ = 0;
+
+  // セッションは保持しないが、互換のため初期化だけ
   client_.setInsecure();
-  // NOTE: setTimeout() is not available on all cores; HTTPClient timeout is used.
 }
+
 
 bool AzureTts::isBusy() const {
   return state_ == Fetching || state_ == Ready || state_ == Playing;
@@ -529,33 +548,205 @@ void AzureTts::poll() {
   }
 }
 
+
 void AzureTts::taskEntry(void* pv) {
-  static_cast<AzureTts*>(pv)->taskBody();
+  AzureTts* self = static_cast<AzureTts*>(pv);
+  if (self) {
+    self->taskBody();
+  }
   vTaskDelete(nullptr);
 }
 
+
+// --- [ADD] AzureTts::warmupDnsOnce_ ---
+void AzureTts::warmupDnsOnce_() {
+  if (dnsWarmed_) return;
+  dnsWarmed_ = true;
+
+  if (!MC_AZ_SPEECH_REGION || !MC_AZ_SPEECH_REGION[0]) return;
+
+  IPAddress ip;
+  String host = String(MC_AZ_SPEECH_REGION) + ".tts.speech.microsoft.com";
+  (void)WiFi.hostByName(host.c_str(), ip);  // DNS warm-up
+}
+
+// --- [ADD] AzureTts::fetchTokenOld_ ---
+bool AzureTts::fetchTokenOld_(String* outTok) {
+  if (!outTok) return false;
+  outTok->clear();
+
+  if (key_.length() == 0 || !MC_AZ_SPEECH_REGION[0]) return false;
+
+  const String url = String("https://") + MC_AZ_SPEECH_REGION +
+                     ".api.cognitive.microsoft.com/sts/v1.0/issueToken";
+
+  WiFiClientSecure c;
+  c.setInsecure();
+
+  HTTPClient h;
+  h.setReuse(false);
+  h.useHTTP10(true);
+  h.setTimeout(2000);
+
+  if (!h.begin(c, url)) {
+    h.end();
+    return false;
+  }
+
+  h.addHeader("Ocp-Apim-Subscription-Key", key_);
+  int code = h.POST((uint8_t*)nullptr, 0);
+
+  if (code == 200) {
+    String tok = h.getString();
+    tok.trim();
+    if (tok.length()) {
+      *outTok = tok;
+      h.end();
+      return true;
+    }
+  }
+
+  h.end();
+  return false;
+}
+
+// --- [ADD] AzureTts::fetchTokenNew_ ---
+bool AzureTts::fetchTokenNew_(String* outTok) {
+  if (!outTok) return false;
+  outTok->clear();
+
+  if (key_.length() == 0 || !MC_AZ_SPEECH_REGION[0]) return false;
+
+  const String url = String("https://") + MC_AZ_SPEECH_REGION +
+                     ".sts.speech.microsoft.com/cognitiveservices/api/v1/token";
+
+  WiFiClientSecure c;
+  c.setInsecure();
+
+  HTTPClient h;
+  h.setReuse(false);
+  h.useHTTP10(true);
+  h.setTimeout(2000);
+
+  if (!h.begin(c, url)) {
+    h.end();
+    return false;
+  }
+
+  h.addHeader("Ocp-Apim-Subscription-Key", key_);
+  int code = h.POST((uint8_t*)nullptr, 0);
+
+  if (code == 200) {
+    String tok = h.getString();
+    tok.trim();
+    if (tok.length()) {
+      *outTok = tok;
+      h.end();
+      return true;
+    }
+  }
+
+  h.end();
+  return false;
+}
+
+// --- [ADD] AzureTts::ensureToken_ ---
+bool AzureTts::ensureToken_() {
+  const uint32_t now = millis();
+
+  // 1分余裕を見て有効判定
+  if (token_.length() && (int32_t)(tokenExpireMs_ - (now + 60000UL)) > 0) {
+    return true;
+  }
+
+  String tok;
+  bool ok = false;
+
+  if (preferOldSts_) {
+    if (fetchTokenOld_(&tok)) { ok = true; preferOldSts_ = true; }
+    else if (fetchTokenNew_(&tok)) { ok = true; preferOldSts_ = false; }
+  } else {
+    if (fetchTokenNew_(&tok)) { ok = true; preferOldSts_ = false; }
+    else if (fetchTokenOld_(&tok)) { ok = true; preferOldSts_ = true; }
+  }
+
+  if (ok) {
+    token_ = tok;
+    tokenExpireMs_ = now + 9UL * 60UL * 1000UL; // 9分キャッシュ
+    return true;
+  }
+
+  token_.clear();
+  tokenExpireMs_ = 0;
+  return false;
+}
+
+
+// --- [REPLACE] AzureTts::taskBody ---
 void AzureTts::taskBody() {
   const String text  = reqText_;
   const String voice = reqVoice_;
-  String ssml = buildSsml_(text, voice);
+  const String ssml  = buildSsml_(text, voice);
+
+  mc_logf("[TTS] fetch start (len=%d)", (int)text.length());
 
   uint8_t* buf = nullptr;
   size_t   len = 0;
 
-  mc_logf("[TTS] fetch start (len=%d)", (int)text.length());
+  const uint32_t tAll0 = millis();
 
-  uint32_t t0 = millis();
-  bool ok = fetchWav_(ssml, &buf, &len);
-  last_.fetchMs = millis() - t0;
+  auto makeIntervalMs = [&]() -> uint32_t {
+    // 1.2–1.5s + ±200ms
+    int32_t base = 1200 + (int32_t)random(0, 301);     // 1200..1500
+    int32_t jit  = (int32_t)random(-200, 201);         // -200..+200
+    int32_t v = base + jit;
+    if (v < 600) v = 600;
+    return (uint32_t)v;
+  };
+
+  auto enforceInterval = [&](uint32_t intervalMs) {
+    if (lastRequestMs_ == 0) return;
+    const uint32_t now = millis();
+    const uint32_t due = lastRequestMs_ + intervalMs;
+    const int32_t wait = (int32_t)(due - now);
+    if (wait > 0) delay((uint32_t)wait);
+  };
+
+  bool ok = false;
+
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    const uint32_t intervalMs = makeIntervalMs();
+    enforceInterval(intervalMs);
+
+    lastRequestMs_ = millis();
+
+    if (buf) { free(buf); buf = nullptr; }
+    len = 0;
+
+    ok = fetchWav_(ssml, &buf, &len);
+    if (ok) break;
+
+    if (attempt == 0) {
+      // 指数バックオフ（1回だけ）
+      const uint32_t backoff = 250 + (uint32_t)random(0, 251); // 250..500ms
+      delay(backoff);
+      continue;
+    }
+  }
+
+  last_.fetchMs = millis() - tAll0;
+
   if (!ok) {
     mc_logf("[TTS] fetch failed");
     if (buf) free(buf);
-    state_ = Error;
-    task_ = nullptr;
+    buf = nullptr;
+    len = 0;
 
-    if (last_.err[0] == '\0') strncpy(last_.err, "fetch_failed", sizeof(last_.err)-1);
+    if (last_.err[0] == '\0') strncpy(last_.err, "fetch", sizeof(last_.err)-1);
     last_.ok = false;
 
+    state_ = Error;
+    task_ = nullptr;
     return;
   }
 
@@ -575,8 +766,11 @@ void AzureTts::taskBody() {
 }
 
 String AzureTts::xmlEscape_(const String& s) {
+  // SSML/XMLで壊れやすい文字だけをエスケープする
+  // UTF-8日本語はそのままでOK（& < > " ' だけ置換）
   String out;
   out.reserve(s.length() + 16);
+
   for (size_t i = 0; i < s.length(); ++i) {
     const char c = s[i];
     switch (c) {
@@ -585,11 +779,13 @@ String AzureTts::xmlEscape_(const String& s) {
       case '>':  out += F("&gt;");   break;
       case '"':  out += F("&quot;"); break;
       case '\'': out += F("&apos;"); break;
-      default:   out += c; break;
+      default:   out += c;           break;
     }
   }
   return out;
 }
+
+
 
 String AzureTts::buildSsml_(const String& text, const String& voice) const {
   String t = xmlEscape_(text);
@@ -606,242 +802,239 @@ String AzureTts::buildSsml_(const String& text, const String& voice) const {
   return ssml;
 }
 
+// --- [REPLACE] AzureTts::fetchWav_ ---
 bool AzureTts::fetchWav_(const String& ssml, uint8_t** outBuf, size_t* outLen) {
   *outBuf = nullptr;
   *outLen = 0;
 
   if (WiFi.status() != WL_CONNECTED) {
     mc_logf("[TTS] fetch: WiFi not connected");
+    strncpy(last_.err, "wifi", sizeof(last_.err)-1);
     return false;
   }
 
-  // If Wi-Fi got reconnected etc., reset keep-alive session first.
-  if (sessionResetPending_) {
-    resetSession_();
+  warmupDnsOnce_();
+
+  // Token（失敗してもサブスクキーにフォールバック）
+  const bool tokenOk = ensureToken_();
+  if (!tokenOk) {
+    mc_logf("[TTS] token failed -> fallback to key header");
   }
 
-  https_.setTimeout(20000);
-  https_.setReuse(keepaliveEnabled_);
-  https_.useHTTP10(!keepaliveEnabled_);  // keep-aliveしたい時はHTTP/1.1
+  WiFiClientSecure cli;
+  cli.setInsecure();
 
-  const char* endpoint = endpoint_.c_str();
+  HTTPClient http;
+  http.setReuse(false);      // ★再利用しない
+  http.useHTTP10(true);      // ★chunked回避を狙う（ただし念のためchunk decodeは残す）
+  http.setTimeout(cfg_.httpTimeoutMs);
 
-  // 失敗時のリトライは1回だけ（keep-aliveが切れてた時に効く）
-  for (int attempt = 0; attempt < 2; ++attempt) {
+  if (!http.begin(cli, endpoint_)) {
+    mc_logf("[TTS] http.begin failed");
+    strncpy(last_.err, "begin", sizeof(last_.err)-1);
+    http.end();
+    return false;
+  }
 
-    if (!https_.begin(client_, endpoint)) {
-      mc_logf("[TTS] https.begin failed (attempt=%d)", attempt);
-      resetSession_();
-      continue;
+  const char* hdrKeys[] = {"Content-Type","Transfer-Encoding","Content-Length","Connection"};
+  http.collectHeaders(hdrKeys, 4);
+
+  http.addHeader("Content-Type", "application/ssml+xml");
+  http.addHeader("X-Microsoft-OutputFormat", MC_AZ_TTS_OUTPUT_FORMAT);
+  http.addHeader("User-Agent", "Mining-Stackchan-Core2");
+  http.addHeader("Accept", "audio/wav");
+  http.addHeader("Accept-Encoding", "identity");
+  http.addHeader("Connection", "close");
+
+  if (tokenOk) {
+    http.addHeader("Authorization", String("Bearer ") + token_);
+  } else {
+    http.addHeader("Ocp-Apim-Subscription-Key", key_);
+  }
+
+  last_.keepAlive = false;
+
+  int httpCode = http.POST((uint8_t*)ssml.c_str(), ssml.length());
+  last_.httpCode = httpCode;
+
+  if (httpCode != 200) {
+    mc_logf("[TTS] HTTP %d", httpCode);
+    strncpy(last_.err, "http", sizeof(last_.err)-1);
+
+    String body = http.getString();
+    if (body.length()) {
+      body = body.substring(0, 200);
+      mc_logf("[TTS] err body: %s", body.c_str());
     }
 
-    const char* hdrKeys[] = {"Content-Type","Content-Encoding","Transfer-Encoding","Content-Length","Connection"};
-    https_.collectHeaders(hdrKeys, 5);
+    http.end();
+    return false;
+  }
 
-    https_.addHeader("Ocp-Apim-Subscription-Key", key_.c_str());
-    https_.addHeader("Content-Type", "application/ssml+xml");
-    https_.addHeader("X-Microsoft-OutputFormat", MC_AZ_TTS_OUTPUT_FORMAT);
-    https_.addHeader("User-Agent", "Mining-Stackchan-Core2");
-    https_.addHeader("Accept", "audio/wav");
-    https_.addHeader("Accept-Encoding", "identity");
-    https_.addHeader("Connection", keepaliveEnabled_ ? "keep-alive" : "close");
+  const String te = http.header("Transfer-Encoding");
+  const String cl = http.header("Content-Length");
+  mc_logf("[TTS] resp hdr: te=%s cl=%s", te.c_str(), cl.c_str());
 
-    int httpCode = https_.POST((uint8_t*)ssml.c_str(), ssml.length());
-    if (httpCode != 200) {
-      mc_logf("[TTS] HTTP %d (attempt=%d)", httpCode, attempt);
-      String body = https_.getString();
-      if (body.length()) {
-        String head = body.substring(0, 240);
-        mc_logf("[TTS] body: %s", head.c_str());
-      }
-      https_.end();
+  WiFiClient* stream = http.getStreamPtr();
+  if (!waitBodyStart_(stream, cfg_.bodyStartTimeoutMs)) {
+    mc_logf("[TTS] body start timeout");
+    strncpy(last_.err, "firstbyte", sizeof(last_.err)-1);
+    http.end();
+    return false;
+  }
 
-      last_.httpCode = httpCode;
-      strncpy(last_.err, "http", sizeof(last_.err)-1);
+  int total = http.getSize();  // Content-Length（不明なら -1）
+  const bool hdrChunked = (te.indexOf("chunked") >= 0);
 
-      // keep-aliveが壊れてる/切れてる時は 1回だけ作り直して再試行
-      if (attempt == 0) {
-        resetSession_();
-        continue;
-      }
+  // ヘッダが取れない時の保険：先頭がHEXなら chunked かも
+  bool maybeChunked = hdrChunked;
+  if (!maybeChunked) {
+    int p = stream->peek();
+    if (p >= 0 && isHexByteLead_(p)) maybeChunked = true;
+  }
+  last_.chunked = maybeChunked;
+
+  // 1) Content-Length が取れている
+  if (total > 0 && !maybeChunked) {
+    uint8_t* buf = nullptr;
+#if defined(ESP32)
+    buf = (uint8_t*)heap_caps_malloc((size_t)total, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) buf = (uint8_t*)heap_caps_malloc((size_t)total, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+#else
+    buf = (uint8_t*)malloc((size_t)total);
+#endif
+    if (!buf) {
+      mc_logf("[TTS] malloc failed (%d)", total);
+      strncpy(last_.err, "malloc", sizeof(last_.err)-1);
+      http.end();
       return false;
     }
 
-    String ct = https_.header("Content-Type");
-    String ce = https_.header("Content-Encoding");
-    String te = https_.header("Transfer-Encoding");
-    String cl = https_.header("Content-Length");
-    String cn = https_.header("Connection");
+    size_t readTotal = 0;
+    const uint32_t tStart = millis();
+    uint32_t lastDataMs = millis();
 
-    mc_logf("[TTS] resp hdr: type=%s enc=%s te=%s cl=%s conn=%s",
-            ct.c_str(), ce.c_str(), te.c_str(), cl.c_str(), cn.c_str());
+    while (readTotal < (size_t)total) {
+      if ((uint32_t)(millis() - tStart) > cfg_.chunkTotalTimeoutMs) break;
 
-    int total = https_.getSize();  // Content-Length（不明なら -1）
-    mc_logf("[TTS] resp size=%d", total);
+      int avail = stream->available();
+      if (avail > 0) {
+        size_t toRead = (size_t)avail;
+        size_t remain = (size_t)total - readTotal;
+        if (toRead > remain) toRead = remain;
 
-    logHeap_("pre-alloc");
-    logSpeaker_("pre-alloc");
-
-    WiFiClient* stream = https_.getStreamPtr();
-
-    // keep-alive の「死んだ接続」対策：本文が来なければすぐ捨ててリトライ
-    uint32_t tWait = millis();
-    while (stream->available() == 0 && https_.connected() && (millis() - tWait) < 900) {
-    delay(1);
-    }
-    if (stream->available() == 0) {
-    mc_logf("[TTS] body not arrived -> stale keep-alive, reset+retry");
-    https_.end();
-    resetSession_();     // ← これが効く
-    continue;            // 次の attempt へ
-    }
-
-    // 1) Content-Length が分かる場合
-    if (total > 0) {
-      uint8_t* buf = nullptr;
-#if defined(ESP32)
-      buf = (uint8_t*)heap_caps_malloc((size_t)total, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-      if (!buf) buf = (uint8_t*)heap_caps_malloc((size_t)total, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-#else
-      buf = (uint8_t*)malloc((size_t)total);
-#endif
-      if (!buf) {
-        mc_logf("[TTS] malloc failed (%d)", total);
-        https_.end();
-        return false;
-      }
-
-      size_t readTotal = 0;
-      uint32_t t0 = millis();
-
-      while (readTotal < (size_t)total) {
-        int avail = stream->available();
-        if (avail > 0) {
-          size_t toRead = (size_t)avail;
-          size_t remain = (size_t)total - readTotal;
-          if (toRead > remain) toRead = remain;
-
-          int r = stream->read((uint8_t*)buf + readTotal, toRead);
-          if (r > 0) {
-            readTotal += (size_t)r;
-            t0 = millis();
-          } else {
-            delay(1);
-          }
+        int r = stream->read(buf + readTotal, toRead);
+        if (r > 0) {
+          readTotal += (size_t)r;
+          lastDataMs = millis();
         } else {
-          if ((millis() - t0) > 20000) break;
           delay(1);
         }
-      }
-
-      https_.end();
-
-      if (readTotal != (size_t)total) {
-        mc_logf("[TTS] read short %u/%u", (unsigned)readTotal, (unsigned)total);
-        free(buf);
-        return false;
-      }
-
-      *outBuf = buf;
-      *outLen = readTotal;
-      return true;
-    }
-
-    // 2) Content-Length 不明: chunked を優先してデコード
-    bool maybeChunked = (te.indexOf("chunked") >= 0);
-
-    last_.chunked = maybeChunked;
-
-    // ヘッダが取れなかった場合でも、先頭1byteがHEXなら chunked の可能性が高い
-    if (!maybeChunked) {
-      int p = stream->peek();
-      if (p >= 0 && isHexByteLead_(p)) {
-        maybeChunked = true;
-      }
-    }
-
-    if (maybeChunked) {
-      uint8_t* buf = nullptr;
-      size_t len = 0;
-      bool ok2 = readChunked_(stream, &buf, &len);
-      https_.end();
-      if (!ok2) {
-        mc_logf("[TTS] chunked decode failed");
-        strncpy(last_.err, "chunk_timeout", sizeof(last_.err)-1);
-
-        free(buf);
-        // try again by resetting session once
-        if (attempt == 0) {
-          resetSession_();
-          continue;
-        }
-        return false;
-      }
-      *outBuf = buf;
-      *outLen = len;
-      return true;
-    }
-
-    // 3) それ以外フォールバック（Connection: close の時など）
-    size_t cap = 0, used = 0;
-    uint8_t* buf = nullptr;
-    uint8_t tmp[1024];
-    uint32_t t0 = millis();
-
-    while (https_.connected() || stream->available()) {
-      int avail = stream->available();
-      if (avail <= 0) {
-        if ((millis() - t0) > 20000) break;
+      } else {
+        if ((uint32_t)(millis() - lastDataMs) > cfg_.contentReadIdleTimeoutMs) break;
         delay(1);
-        continue;
       }
-      size_t toRead = (size_t)avail;
-      if (toRead > sizeof(tmp)) toRead = sizeof(tmp);
-
-      int r = stream->read(tmp, toRead);
-      if (r <= 0) { delay(1); continue; }
-
-      if (used + (size_t)r > cap) {
-        size_t newCap = (cap == 0) ? 4096 : cap * 2;
-        while (newCap < used + (size_t)r) newCap *= 2;
-#if defined(ESP32)
-        void* nb = heap_caps_realloc(buf, newCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!nb) nb = heap_caps_realloc(buf, newCap, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-#else
-        void* nb = realloc(buf, newCap);
-#endif
-        if (!nb) {
-          mc_logf("[TTS] realloc failed (%u)", (unsigned)newCap);
-          if (buf) free(buf);
-          https_.end();
-          return false;
-        }
-        buf = (uint8_t*)nb;
-        cap = newCap;
-      }
-
-      memcpy(buf + used, tmp, (size_t)r);
-      used += (size_t)r;
-      t0 = millis();
     }
 
-    https_.end();
+    http.end();
 
-    if (used == 0) {
-      if (buf) free(buf);
-      mc_logf("[TTS] empty response");
-      // try again with reset once
-      if (attempt == 0) {
-        resetSession_();
-        continue;
-      }
+    if (readTotal != (size_t)total) {
+      mc_logf("[TTS] read short %u/%u", (unsigned)readTotal, (unsigned)total);
+      strncpy(last_.err, "short", sizeof(last_.err)-1);
+      free(buf);
       return false;
     }
 
     *outBuf = buf;
-    *outLen = used;
+    *outLen = readTotal;
     return true;
   }
 
-  return false;
+  // 2) chunked（または怪しい）
+  if (maybeChunked) {
+    uint8_t* buf = nullptr;
+    size_t len = 0;
+    bool ok = readChunked_(stream, &buf, &len,
+                          cfg_.chunkTotalTimeoutMs,
+                          cfg_.chunkSizeLineTimeoutMs,
+                          cfg_.chunkDataIdleTimeoutMs);
+    http.end();
+
+    if (!ok || len == 0) {
+      mc_logf("[TTS] chunked decode failed");
+      strncpy(last_.err, "chunk", sizeof(last_.err)-1);
+      if (buf) free(buf);
+      return false;
+    }
+
+    *outBuf = buf;
+    *outLen = len;
+    return true;
+  }
+
+  // 3) それ以外（長さ不明・非chunked）フォールバック：closeまで読む
+  size_t cap = 0, used = 0;
+  uint8_t* buf = nullptr;
+  uint8_t tmp[1024];
+
+  const uint32_t tStart = millis();
+  uint32_t lastDataMs = millis();
+
+  auto ensureCap = [&](size_t need) -> bool {
+    if (need <= cap) return true;
+    size_t newCap = (cap == 0) ? 4096 : cap * 2;
+    while (newCap < need) newCap *= 2;
+#if defined(ESP32)
+    void* nb = heap_caps_realloc(buf, newCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!nb) nb = heap_caps_realloc(buf, newCap, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+#else
+    void* nb = realloc(buf, newCap);
+#endif
+    if (!nb) return false;
+    buf = (uint8_t*)nb;
+    cap = newCap;
+    return true;
+  };
+
+  while (http.connected() || stream->available()) {
+    if ((uint32_t)(millis() - tStart) > cfg_.chunkTotalTimeoutMs) break;
+
+    int avail = stream->available();
+    if (avail <= 0) {
+      if ((uint32_t)(millis() - lastDataMs) > cfg_.contentReadIdleTimeoutMs) break;
+      delay(1);
+      continue;
+    }
+
+    size_t toRead = (size_t)avail;
+    if (toRead > sizeof(tmp)) toRead = sizeof(tmp);
+
+    int r = stream->read(tmp, toRead);
+    if (r <= 0) { delay(1); continue; }
+
+    if (!ensureCap(used + (size_t)r)) {
+      mc_logf("[TTS] realloc failed");
+      strncpy(last_.err, "realloc", sizeof(last_.err)-1);
+      if (buf) free(buf);
+      http.end();
+      return false;
+    }
+
+    memcpy(buf + used, tmp, (size_t)r);
+    used += (size_t)r;
+    lastDataMs = millis();
+  }
+
+  http.end();
+
+  if (used == 0) {
+    mc_logf("[TTS] empty response");
+    strncpy(last_.err, "empty", sizeof(last_.err)-1);
+    if (buf) free(buf);
+    return false;
+  }
+
+  *outBuf = buf;
+  *outLen = used;
+  return true;
 }

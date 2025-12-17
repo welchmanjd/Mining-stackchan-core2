@@ -75,6 +75,21 @@ private:
 
   bool fetchWav_(const String& ssml, uint8_t** outBuf, size_t* outLen);
 
+  // ---- new (token + dns warmup + rate limit) ----
+  void warmupDnsOnce_();
+
+  bool ensureToken_();
+  bool fetchTokenOld_(String* outTok);
+  bool fetchTokenNew_(String* outTok);
+
+  bool dnsWarmed_ = false;
+
+  String   token_;
+  uint32_t tokenExpireMs_ = 0;
+  bool     preferOldSts_ = true;
+
+  uint32_t lastRequestMs_ = 0;  // リクエスト間隔制御用
+
   void resetSession_();  // internal (do not call from other threads)
 
 private:
@@ -112,3 +127,4 @@ private:
   LastResult last_;
 
 };
+
