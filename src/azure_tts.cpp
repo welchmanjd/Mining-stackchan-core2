@@ -369,7 +369,7 @@ void AzureTts::begin(uint8_t volume) {
   dnsWarmed_ = false;
   token_ = "";
   tokenExpireMs_ = 0;
-  preferOldSts_ = true;
+
   lastRequestMs_ = 0;
 
   // セッションは保持しないが、互換のため初期化だけ
@@ -566,8 +566,18 @@ void AzureTts::warmupDnsOnce_() {
   if (!MC_AZ_SPEECH_REGION || !MC_AZ_SPEECH_REGION[0]) return;
 
   IPAddress ip;
-  String host = String(MC_AZ_SPEECH_REGION) + ".tts.speech.microsoft.com";
-  (void)WiFi.hostByName(host.c_str(), ip);  // DNS warm-up
+
+  // TTS host
+  {
+    String host = String(MC_AZ_SPEECH_REGION) + ".tts.speech.microsoft.com";
+    (void)WiFi.hostByName(host.c_str(), ip);
+  }
+
+  // STS host (old / documented)
+  {
+    String host = String(MC_AZ_SPEECH_REGION) + ".api.cognitive.microsoft.com";
+    (void)WiFi.hostByName(host.c_str(), ip);
+  }
 }
 
 // --- [ADD] AzureTts::fetchTokenOld_ ---
@@ -610,45 +620,7 @@ bool AzureTts::fetchTokenOld_(String* outTok) {
   return false;
 }
 
-// --- [ADD] AzureTts::fetchTokenNew_ ---
-bool AzureTts::fetchTokenNew_(String* outTok) {
-  if (!outTok) return false;
-  outTok->clear();
 
-  if (key_.length() == 0 || !MC_AZ_SPEECH_REGION[0]) return false;
-
-  const String url = String("https://") + MC_AZ_SPEECH_REGION +
-                     ".sts.speech.microsoft.com/cognitiveservices/api/v1/token";
-
-  WiFiClientSecure c;
-  c.setInsecure();
-
-  HTTPClient h;
-  h.setReuse(false);
-  h.useHTTP10(true);
-  h.setTimeout(2000);
-
-  if (!h.begin(c, url)) {
-    h.end();
-    return false;
-  }
-
-  h.addHeader("Ocp-Apim-Subscription-Key", key_);
-  int code = h.POST((uint8_t*)nullptr, 0);
-
-  if (code == 200) {
-    String tok = h.getString();
-    tok.trim();
-    if (tok.length()) {
-      *outTok = tok;
-      h.end();
-      return true;
-    }
-  }
-
-  h.end();
-  return false;
-}
 
 // --- [ADD] AzureTts::ensureToken_ ---
 bool AzureTts::ensureToken_() {
@@ -660,17 +632,7 @@ bool AzureTts::ensureToken_() {
   }
 
   String tok;
-  bool ok = false;
-
-  if (preferOldSts_) {
-    if (fetchTokenOld_(&tok)) { ok = true; preferOldSts_ = true; }
-    else if (fetchTokenNew_(&tok)) { ok = true; preferOldSts_ = false; }
-  } else {
-    if (fetchTokenNew_(&tok)) { ok = true; preferOldSts_ = false; }
-    else if (fetchTokenOld_(&tok)) { ok = true; preferOldSts_ = true; }
-  }
-
-  if (ok) {
+  if (fetchTokenOld_(&tok)) {
     token_ = tok;
     tokenExpireMs_ = now + 9UL * 60UL * 1000UL; // 9分キャッシュ
     return true;
@@ -680,6 +642,7 @@ bool AzureTts::ensureToken_() {
   tokenExpireMs_ = 0;
   return false;
 }
+
 
 
 // --- [REPLACE] AzureTts::taskBody ---

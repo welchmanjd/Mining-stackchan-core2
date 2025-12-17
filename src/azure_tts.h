@@ -80,13 +80,13 @@ private:
 
   bool ensureToken_();
   bool fetchTokenOld_(String* outTok);
-  bool fetchTokenNew_(String* outTok);
+
 
   bool dnsWarmed_ = false;
 
   String   token_;
-  uint32_t tokenExpireMs_ = 0;
-  bool     preferOldSts_ = true;
+  uint32_t tokenExpireMs_ = 0;   // ★追加：トークン有効期限(millis基準)
+
 
   uint32_t lastRequestMs_ = 0;  // リクエスト間隔制御用
 
