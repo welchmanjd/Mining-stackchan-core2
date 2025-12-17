@@ -171,7 +171,8 @@ bool UIMining::isAttentionActive() const {
 
 
 
-void UIMining::drawAll(const PanelData& p, const String& tickerText) {
+void UIMining::drawAll(const PanelData& p, const String& tickerText, bool suppressTouchBeep) {
+
   uint32_t now = millis();
 
 
@@ -305,7 +306,7 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText) {
   // ===== ここから通常ダッシュボード描画 =====
 
   // 1) タッチは毎フレーム処理（間引かない）
-  handlePageInput();
+  handlePageInput(suppressTouchBeep);
 
   // 2) ティッカーも毎フレーム回す（中の interval で速度調整）
   drawTicker(tickerText);
@@ -744,7 +745,7 @@ void UIMining::drawStaticFrame() {
 
 // ===== Page input =====
 
-void UIMining::handlePageInput() {
+void UIMining::handlePageInput(bool suppressTouchBeep) {
   auto& tp = M5.Touch;
   static bool prevPressed = false;
 
@@ -763,10 +764,11 @@ void UIMining::handlePageInput() {
 
   // 「押された瞬間」（立ち上がりエッジ）
   if (pressed && !prevPressed) {
-    // ★タッチフィードバックのビープ
-    //    どこを触っても鳴るようにしておく（ユーザー側の感覚優先）
-    //    周波数 1500Hz, 長さ 50ms はお好みで調整OK
-    M5.Speaker.tone(1500, 50);
+    // ★タッチフィードバックのビープ（どこを触っても鳴る）
+    //    ただし BtnA/B/C が同フレームで反応した場合は抑止する
+    if (!suppressTouchBeep) {
+      M5.Speaker.tone(1500, 50);
+    }
 
     // 右パネル領域内ならページを進める
     if (det.x >= X_INF && det.x < X_INF + INF_W &&
@@ -778,6 +780,7 @@ void UIMining::handlePageInput() {
 
   prevPressed = pressed;
 }
+
 
 // ===== Last share age =====
 

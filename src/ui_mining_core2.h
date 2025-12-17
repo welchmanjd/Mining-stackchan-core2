@@ -78,7 +78,7 @@ public:
   void setAutoPageMs(uint32_t ms);
 
   // 1フレーム分の描画
-  void drawAll(const PanelData& p, const String& tickerText);
+  void drawAll(const PanelData& p, const String& tickerText, bool suppressTouchBeep = false);
 
   // 起動時のスプラッシュ画面（WiFi / Pool の2行 + 診断）
   void drawSplash(const String& wifiText,  uint16_t wifiCol,
@@ -227,7 +227,7 @@ private:
   void drawStaticFrame();
 
   // ---------- Page input ----------
-  void handlePageInput();
+  void handlePageInput(bool suppressTouchBeep);
 
   // ---------- Last share age ----------
   void updateLastShareClock(const PanelData& p);

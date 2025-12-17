@@ -61,6 +61,10 @@ static unsigned long lastInputMs = 0;
 // 画面がスリープ（消灯）中かどうか
 static bool displaySleeping = false;
 
+// BtnA/B/C の押下に伴う『タッチ開始ビープ』を次のUI更新で1回だけ抑止する
+static bool g_suppressTouchBeepOnce = false;
+
+
 // NTP が一度設定されたかどうか
 static bool g_timeNtpDone = false;
 
@@ -268,16 +272,15 @@ void loop() {
   // --- 入力検出（ボタン + タッチ） ---
   bool anyInput = false;
 
-  // 物理ボタン
-  if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnC.wasPressed()) {
-    anyInput = true;
-  }
 
   // ★ wasPressed() は「読んだ瞬間に消費」されるので、必ず一度だけ読む
   const bool btnA = M5.BtnA.wasPressed();
   const bool btnB = M5.BtnB.wasPressed();
   const bool btnC = M5.BtnC.wasPressed();
-  if (btnA || btnB || btnC) anyInput = true;
+  if (btnA || btnB || btnC) {
+    anyInput = true;
+    g_suppressTouchBeepOnce = true;   // ★ 次のUI更新でタッチ開始ビープを1回だけ抑止
+  }
 
 
   // タッチ入力（短タップも拾えるように「押された瞬間」を検出）
@@ -493,6 +496,9 @@ void loop() {
     // ticker は Step1 の buildTicker(summary) のまま
     String ticker = buildTicker(summary);
 
+    // ★ BtnA/B/C が反応していたら、次の drawAll 1回だけタッチ開始ビープを抑止
+    const bool suppressTouchBeep = g_suppressTouchBeepOnce;
+    g_suppressTouchBeepOnce = false;
 
     // ★ ここで画面を切り替え
     if ((g_mode == MODE_STACKCHAN)) {
