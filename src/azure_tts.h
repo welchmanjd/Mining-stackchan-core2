@@ -87,9 +87,11 @@ private:
   String   token_;
   uint32_t tokenExpireMs_ = 0;   // ★追加：トークン有効期限(millis基準)
 
-
+  // token fetch backoff (to avoid stalling every speak when STS is flaky)
+  uint32_t tokenFailUntilMs_ = 0;
   uint32_t lastRequestMs_ = 0;  // リクエスト間隔制御用
-
+  uint8_t  tokenFailCount_   = 0;
+  
   void resetSession_();  // internal (do not call from other threads)
 
 private:

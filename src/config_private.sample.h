@@ -21,3 +21,7 @@
 #define MC_AZ_SPEECH_REGION "japaneast"
 #define MC_AZ_SPEECH_KEY    "your-azure-speech-key"
 #define MC_AZ_TTS_VOICE     "ja-JP-AoiNeural"
+
+// 任意：Speech リソースのカスタムサブドメイン
+// 例) "my-speech-app"  または  "my-speech-app.cognitiveservices.azure.com"
+#define MC_AZ_CUSTOM_SUBDOMAIN ""

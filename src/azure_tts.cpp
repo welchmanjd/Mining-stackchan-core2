@@ -44,6 +44,11 @@
 #ifndef MC_AZ_TTS_KEEPALIVE
   #define MC_AZ_TTS_KEEPALIVE 1
 #endif
+#ifndef MC_AZ_CUSTOM_SUBDOMAIN
+  // 例: "my-speech-app" または "my-speech-app.cognitiveservices.azure.com"
+  #define MC_AZ_CUSTOM_SUBDOMAIN ""
+#endif
+
 // ----------------------------------------------------------
 
 namespace {
@@ -57,6 +62,52 @@ static String buildEndpointFromRegion_(const char* region) {
   ep += ".tts.speech.microsoft.com/cognitiveservices/v1";
   return ep;
 }
+
+static String normalizeCustomHost_(const char* sub) {
+  if (!sub) return String("");
+  String h = String(sub);
+  h.trim();
+  if (!h.length()) return String("");
+
+  // allow "https://..." input
+  if (h.startsWith("https://")) h = h.substring(8);
+
+  // drop path if mistakenly included
+  int slash = h.indexOf('/');
+  if (slash >= 0) h = h.substring(0, slash);
+
+  // drop trailing dot/slash-ish
+  while (h.endsWith("/")) h.remove(h.length() - 1);
+
+  // If only "my-speech-app" is given, append the standard domain.
+  if (h.indexOf('.') < 0) {
+    h += ".cognitiveservices.azure.com";
+  }
+  return h;
+}
+
+static String buildEndpointFromCustomHost_(const char* customSubdomain) {
+  String host = normalizeCustomHost_(customSubdomain);
+  if (!host.length()) return String("");
+  String ep;
+  ep.reserve(host.length() + 64);
+  ep += "https://";
+  ep += host;
+  ep += "/tts/cognitiveservices/v1";
+  return ep;
+}
+
+static String buildStsUrlFromCustomHost_(const char* customSubdomain) {
+  String host = normalizeCustomHost_(customSubdomain);
+  if (!host.length()) return String("");
+  String url;
+  url.reserve(host.length() + 64);
+  url += "https://";
+  url += host;
+  url += "/sts/v1.0/issueToken";
+  return url;
+}
+
 
 #if defined(ESP32)
 static void logHeap_(const char* tag) {
@@ -347,34 +398,46 @@ static bool isHexByteLead_(int c) {
 void AzureTts::begin(uint8_t volume) {
   (void)volume;  // マスター音量は触らない
 
-  endpoint_     = buildEndpointFromRegion_(MC_AZ_SPEECH_REGION);
+  // endpoint: prefer custom subdomain if provided
+  const bool hasCustom = (MC_AZ_CUSTOM_SUBDOMAIN && MC_AZ_CUSTOM_SUBDOMAIN[0]);
+  if (hasCustom) {
+    endpoint_ = buildEndpointFromCustomHost_(MC_AZ_CUSTOM_SUBDOMAIN);
+    mc_logf("[TTS] endpoint: custom=%s", endpoint_.c_str());
+  } else {
+    endpoint_ = buildEndpointFromRegion_(MC_AZ_SPEECH_REGION);
+    mc_logf("[TTS] endpoint: region=%s", endpoint_.c_str());
+  }
+
   key_          = String(MC_AZ_SPEECH_KEY);
   defaultVoice_ = String(MC_AZ_TTS_VOICE);
 
-  // ★ 昨日の方針：TLS/HTTPの再利用はしない
+  // 方針：TLS/HTTPの再利用はしない
   keepaliveEnabled_ = false;
 
-  // ★ 昨日の推奨タイムアウト（WAVでも“gap”系は有効）
-  cfg_.keepAlive               = false;     // app_test_mode互換のため残すが、実装では常にOFF
-  cfg_.httpTimeoutMs           = 2000;      // POST全体の基準
-  cfg_.bodyStartTimeoutMs      = 1500;      // first byte
-  cfg_.chunkTotalTimeoutMs     = 20000;     // WAVは大きいので少し余裕（必要なら後で詰めよう）
-  cfg_.chunkSizeLineTimeoutMs  = 1500;
-  cfg_.chunkDataIdleTimeoutMs  = 550;       // chunk gap
-  cfg_.contentReadIdleTimeoutMs= 550;       // Content-Length時のgapも同じ扱い
+  // 推奨タイムアウト（WAVでも“gap”系は有効）
+  cfg_.keepAlive                = false;
+  cfg_.httpTimeoutMs            = 2000;
+  cfg_.bodyStartTimeoutMs       = 1500;
+  cfg_.chunkTotalTimeoutMs      = 20000;
+  cfg_.chunkSizeLineTimeoutMs   = 1500;
+  cfg_.chunkDataIdleTimeoutMs   = 550;
+  cfg_.contentReadIdleTimeoutMs = 550;
 
   playbackEnabled_ = true;
 
   // token/dns/rate-limit state
   dnsWarmed_ = false;
-  token_ = "";
+  token_.clear();
   tokenExpireMs_ = 0;
-
+  tokenFailUntilMs_ = 0;
+  tokenFailCount_ = 0;
   lastRequestMs_ = 0;
 
-  // セッションは保持しないが、互換のため初期化だけ
   client_.setInsecure();
 }
+
+
+
 
 
 bool AzureTts::isBusy() const {
@@ -563,68 +626,109 @@ void AzureTts::warmupDnsOnce_() {
   if (dnsWarmed_) return;
   dnsWarmed_ = true;
 
-  if (!MC_AZ_SPEECH_REGION || !MC_AZ_SPEECH_REGION[0]) return;
-
   IPAddress ip;
 
-  // TTS host
-  {
-    String host = String(MC_AZ_SPEECH_REGION) + ".tts.speech.microsoft.com";
-    (void)WiFi.hostByName(host.c_str(), ip);
+  const bool hasCustom = (MC_AZ_CUSTOM_SUBDOMAIN && MC_AZ_CUSTOM_SUBDOMAIN[0]);
+  if (hasCustom) {
+    String host = normalizeCustomHost_(MC_AZ_CUSTOM_SUBDOMAIN);
+    if (host.length()) (void)WiFi.hostByName(host.c_str(), ip);
   }
 
-  // STS host (old / documented)
-  {
-    String host = String(MC_AZ_SPEECH_REGION) + ".api.cognitive.microsoft.com";
-    (void)WiFi.hostByName(host.c_str(), ip);
+  if (MC_AZ_SPEECH_REGION && MC_AZ_SPEECH_REGION[0]) {
+    // TTS host (regional)
+    {
+      String host = String(MC_AZ_SPEECH_REGION) + ".tts.speech.microsoft.com";
+      (void)WiFi.hostByName(host.c_str(), ip);
+    }
+    // STS host (old / documented)
+    {
+      String host = String(MC_AZ_SPEECH_REGION) + ".api.cognitive.microsoft.com";
+      (void)WiFi.hostByName(host.c_str(), ip);
+    }
   }
 }
+
+
 
 // --- [ADD] AzureTts::fetchTokenOld_ ---
 bool AzureTts::fetchTokenOld_(String* outTok) {
   if (!outTok) return false;
   outTok->clear();
 
-  if (key_.length() == 0 || !MC_AZ_SPEECH_REGION[0]) return false;
+  if (key_.length() == 0) return false;
 
-  const String url = String("https://") + MC_AZ_SPEECH_REGION +
-                     ".api.cognitive.microsoft.com/sts/v1.0/issueToken";
+  constexpr uint32_t kTokenTimeoutMs = 6000;  // ★ 2sは短すぎることがあるので増やす
 
-  WiFiClientSecure c;
-  c.setInsecure();
+  auto tryUrl = [&](const String& url) -> bool {
+    WiFiClientSecure c;
+    c.setInsecure();
 
-  HTTPClient h;
-  h.setReuse(false);
-  h.useHTTP10(true);
-  h.setTimeout(2000);
+    HTTPClient h;
+    h.setReuse(false);
+    h.useHTTP10(false);
+    h.setTimeout(kTokenTimeoutMs);
 
-  if (!h.begin(c, url)) {
+    if (!h.begin(c, url)) {
+      mc_logf("[TTS] token: begin failed (%s)", url.c_str());
+      h.end();
+      return false;
+    }
+
+    // doc sample style (harmless if redundant)
+    h.addHeader("Content-type", "application/x-www-form-urlencoded");
+    h.addHeader("Content-length", "0");
+    h.addHeader("Ocp-Apim-Subscription-Key", key_);
+
+    int code = h.POST((uint8_t*)nullptr, 0);
+
+    if (code == 200) {
+      String tok = h.getString();
+      tok.trim();
+      h.end();
+      if (tok.length()) {
+        *outTok = tok;
+        return true;
+      }
+      mc_logf("[TTS] token: empty body (200)");
+      return false;
+    }
+
+    // 失敗時ログ（本文は短く）
+    String body = h.getString();
+    if (body.length()) body = body.substring(0, 120);
+    mc_logf("[TTS] token: HTTP %d (%s) body=%s", code, url.c_str(), body.c_str());
     h.end();
     return false;
+  };
+
+  // 1) カスタムサブドメインがあれば、まず同一ホストで試す（通らない環境もあり得るので「試すだけ」）
+  if (MC_AZ_CUSTOM_SUBDOMAIN && MC_AZ_CUSTOM_SUBDOMAIN[0]) {
+    String url = String("https://") + MC_AZ_CUSTOM_SUBDOMAIN + "/sts/v1.0/issueToken";
+    if (tryUrl(url)) return true;
   }
 
-  h.addHeader("Ocp-Apim-Subscription-Key", key_);
-  int code = h.POST((uint8_t*)nullptr, 0);
-
-  if (code == 200) {
-    String tok = h.getString();
-    tok.trim();
-    if (tok.length()) {
-      *outTok = tok;
-      h.end();
-      return true;
-    }
+  // 2) 公式のリージョンSTS（本命）
+  if (MC_AZ_SPEECH_REGION && MC_AZ_SPEECH_REGION[0]) {
+    String url = String("https://") + MC_AZ_SPEECH_REGION + ".api.cognitive.microsoft.com/sts/v1.0/issueToken";
+    if (tryUrl(url)) return true;
   }
 
-  h.end();
   return false;
 }
+
+
+
 
 
 
 // --- [ADD] AzureTts::ensureToken_ ---
 bool AzureTts::ensureToken_() {
   const uint32_t now = millis();
+
+  // cooldown中はトークン取得を試さない（毎回数秒待つのを防ぐ）
+  if ((int32_t)(tokenFailUntilMs_ - now) > 0) {
+    return false;
+  }
 
   // 1分余裕を見て有効判定
   if (token_.length() && (int32_t)(tokenExpireMs_ - (now + 60000UL)) > 0) {
@@ -634,14 +738,27 @@ bool AzureTts::ensureToken_() {
   String tok;
   if (fetchTokenOld_(&tok)) {
     token_ = tok;
-    tokenExpireMs_ = now + 9UL * 60UL * 1000UL; // 9分キャッシュ
+    tokenExpireMs_ = now + 9UL * 60UL * 1000UL;  // 9分キャッシュ（token自体は10分） :contentReference[oaicite:4]{index=4}
+    tokenFailCount_ = 0;
+    tokenFailUntilMs_ = 0;
+    mc_logf("[TTS] token: ok (cached 9min)");
     return true;
   }
 
+  // 失敗：しばらく諦めて即フォールバック（喋り出し遅延を消す）
   token_.clear();
   tokenExpireMs_ = 0;
+
+  if (tokenFailCount_ < 10) tokenFailCount_++;
+  uint32_t cooldown = 15000UL;
+  if (tokenFailCount_ >= 2) cooldown = 30000UL;
+  if (tokenFailCount_ >= 3) cooldown = 60000UL;
+
+  tokenFailUntilMs_ = now + cooldown;
+  mc_logf("[TTS] token fetch failed -> fallback to key header (cooldown=%us)", (unsigned)(cooldown / 1000UL));
   return false;
 }
+
 
 
 
@@ -779,17 +896,15 @@ bool AzureTts::fetchWav_(const String& ssml, uint8_t** outBuf, size_t* outLen) {
   warmupDnsOnce_();
 
   // Token（失敗してもサブスクキーにフォールバック）
-  const bool tokenOk = ensureToken_();
-  if (!tokenOk) {
-    mc_logf("[TTS] token failed -> fallback to key header");
-  }
+  const bool tokenOk = ensureToken_(); // 失敗ログは ensureToken_ 側で1回だけ出す
 
   WiFiClientSecure cli;
   cli.setInsecure();
 
   HTTPClient http;
-  http.setReuse(false);      // ★再利用しない
-  http.useHTTP10(true);      // ★chunked回避を狙う（ただし念のためchunk decodeは残す）
+  http.setReuse(false);          // ★再利用しない
+  // ★ここ重要：HTTP/1.1に戻す（Content-Length / chunked を素直に受ける）
+  // http.useHTTP10(true);       // ← これをやめる
   http.setTimeout(cfg_.httpTimeoutMs);
 
   if (!http.begin(cli, endpoint_)) {
@@ -809,10 +924,15 @@ bool AzureTts::fetchWav_(const String& ssml, uint8_t** outBuf, size_t* outLen) {
   http.addHeader("Accept-Encoding", "identity");
   http.addHeader("Connection", "close");
 
+  const bool hasCustom = (MC_AZ_CUSTOM_SUBDOMAIN && MC_AZ_CUSTOM_SUBDOMAIN[0]);
+
   if (tokenOk) {
     http.addHeader("Authorization", String("Bearer ") + token_);
   } else {
     http.addHeader("Ocp-Apim-Subscription-Key", key_);
+    if (hasCustom && MC_AZ_SPEECH_REGION && MC_AZ_SPEECH_REGION[0]) {
+      http.addHeader("Ocp-Apim-Subscription-Region", MC_AZ_SPEECH_REGION);
+    }
   }
 
   last_.keepAlive = false;
