@@ -80,6 +80,19 @@ public:
   // 1フレーム分の描画
   void drawAll(const PanelData& p, const String& tickerText, bool suppressTouchBeep = false);
 
+  // Touch snapshot: main loop should read touch (I2C) once and pass it to UI.
+  // This avoids occasional I2C hangs/freezes caused by multiple touch reads per frame.
+  struct TouchSnapshot {
+    bool enabled = false;
+    bool pressed = false;
+    bool down    = false;  // rising edge (pressed && !prev)
+    int  x       = 0;
+    int  y       = 0;
+  };
+
+  void setTouchSnapshot(const TouchSnapshot& s);
+
+
   // 起動時のスプラッシュ画面（WiFi / Pool の2行 + 診断）
   void drawSplash(const String& wifiText,  uint16_t wifiCol,
                   const String& poolText,  uint16_t poolCol,
@@ -111,6 +124,10 @@ public:
   // --- 外部(TTS)向け：スタックチャン吹き出しの「新規発話」イベント ---
   uint32_t stackchanSpeechSeq() const { return stackchan_speech_seq_; }
   const String& stackchanSpeechText() const { return stackchan_speech_text_; }
+
+  // Behavior など外部から吹き出しと表情を直接指定する
+  void setStackchanSpeech(const String& text);
+  void setStackchanExpression(m5avatar::Expression exp);
 
 private:
 
@@ -152,6 +169,9 @@ private:
   };
 
   TextLayoutY computeTextLayoutY() const;
+
+  TouchSnapshot touch_;
+
 
   // ---------- State ----------
   String app_name_;
@@ -210,11 +230,11 @@ private:
   uint32_t attention_until_ms_  = 0;
   String   attention_text_      = "WHAT?";
 
-  // しゃべる/黙る時間（ms）
+  // しゃべる/黙る時間（ms=ミリ秒）
   uint32_t stackchan_talk_min_ms_   = 2500;
   uint32_t stackchan_talk_var_ms_   = 1500; // 0..var を加算
-  uint32_t stackchan_silent_min_ms_ = 1200;
-  uint32_t stackchan_silent_var_ms_ = 1800; // 0..var を加算
+  uint32_t stackchan_silent_min_ms_ = 10000;
+  uint32_t stackchan_silent_var_ms_ = 0; // 0..var を加算
 
   // 機嫌度（-2..+2）: 採掘状況から計算して、表情/動きの強さに使う
   int8_t   mood_level_        = 0;
@@ -292,4 +312,3 @@ private:
   void updateAvatarMood(const PanelData& p);
   String buildStackchanBubble(const PanelData& p);
 };
-

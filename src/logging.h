@@ -16,3 +16,15 @@ inline void mc_logf(const char* fmt, ...) {
 
   Serial.println(buf);
 }
+
+// ===== Event logging helpers =====
+// Toggle DEBUG output by defining EVT_DEBUG_ENABLED (1/0) before including this header.
+#ifndef EVT_DEBUG_ENABLED
+#define EVT_DEBUG_ENABLED 1
+#endif
+
+#define LOG_EVT_INFO(tag, fmt, ...) \
+  mc_logf("[EVT] " tag " " fmt, ##__VA_ARGS__)
+
+#define LOG_EVT_DEBUG(tag, fmt, ...) \
+  do { if (EVT_DEBUG_ENABLED) mc_logf("[EVT] " tag " " fmt, ##__VA_ARGS__); } while (0)
