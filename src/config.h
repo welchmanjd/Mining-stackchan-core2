@@ -14,6 +14,10 @@
 #define MC_TTS_ACTIVE_THREADS_DURING_TTS 0
 #endif
 
+#ifndef MC_ATTENTION_TEXT
+#define MC_ATTENTION_TEXT "Hi"
+#endif
+
 struct AppConfig {
   const char* wifi_ssid;
   const char* wifi_pass;
@@ -30,6 +34,8 @@ struct AppConfig {
 
   const char* app_name;
   const char* app_version;
+
+  const char* attention_text;
 };
 
 inline const AppConfig& appConfig() {
@@ -48,7 +54,9 @@ inline const AppConfig& appConfig() {
     MC_AZ_TTS_VOICE,
 
     "Mining-Stackchan-Core2",   // APP_NAME
-    "0.52"                      // APP_VERSION
+    "0.53",                     // APP_VERSION
+
+    MC_ATTENTION_TEXT           // ATTENTION_TEXT
   };
   return cfg;
 }

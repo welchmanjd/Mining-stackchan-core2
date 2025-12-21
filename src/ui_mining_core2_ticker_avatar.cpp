@@ -318,17 +318,17 @@ void UIMining::updateAvatarLiveliness() {
     // 3〜7秒ごとに目標位置を変える
     if ((int32_t)(now - b.next_change_ms) >= 0) {
       // どのくらい動かすか（px）
-      float rangeX = 10.0f * energy;  // 横 ±10px くらい
-      float rangeY = 6.0f * energy;    // 縦 ± 6px くらい
-
+      float rangeX = 20.0f * energy;  // 横 ±10px くらい default 10.0
+      float rangeY = 12.0f * energy;    // 縦 ± 6px くらい default 6.0
+    
       b.tx = ((float)random(-1000, 1001)) / 1000.0f * rangeX;
       b.ty = ((float)random(-1000, 1001)) / 1000.0f * rangeY;
 
-      b.next_change_ms = now + 3000 + (uint32_t)random(0, 4000); // 3〜7秒
+      b.next_change_ms = now + 1000 + (uint32_t)random(0, 4000); // 3〜7秒
     }
 
     // 目標位置にゆっくり寄せる（なめらかなふわふわ感）
-    float follow = 0.04f* energy;      // 小さいほどゆっくり 元気だと追従が少し速い
+    float follow = 0.1f* energy;      // 小さいほどゆっくり 元気だと追従が少し速い default 0.04f
     b.px += (b.tx - b.px) * follow;
     b.py += (b.ty - b.py) * follow;
 

@@ -67,6 +67,14 @@ static bool     g_lastPopEmptyBusy = false;
 static AppMode  g_lastPopEmptyMode = MODE_DASH;
 static bool     g_lastPopEmptyAttn = false;
 
+// ---- Stackchan bubble-only (no TTS) ----
+// speak=false で出す吹き出し（一定時間で自動クリア）
+static bool     g_bubbleOnlyActive = false;
+static uint32_t g_bubbleOnlyUntilMs = 0;
+static uint32_t g_bubbleOnlyRid = 0;
+static int      g_bubbleOnlyEvType = 0;
+static const uint32_t BUBBLE_ONLY_SHOW_MS = 4500; // 表示時間（お好みで）
+
 // ReactionPriority -> OrchPrio 螟画鋤螳｣險
 static OrchPrio toOrchPrio(ReactionPriority p);
 
@@ -232,6 +240,7 @@ void setup() {
 
   // ★ UI起動 & スプラッシュ表示
   UIMining::instance().begin(cfg.app_name, cfg.app_version);
+  UIMining::instance().setAttentionDefaultText(cfg.attention_text);
 
   // スタックチャン「喋る/黙る」時間設定（単位: ms）
   // 喋る時間 = talkMin + 0〜talkVar の乱数加算
@@ -566,9 +575,24 @@ static uint32_t s_lastTouchPollMs = 0;
     g_attentionActive = true;
     g_attentionUntilMs = now + dur;
 
-    setMiningYieldProfile(MiningYieldStrong());
-    ui.triggerAttention(dur, "WHAT?");
+    ui.triggerAttention(dur, appConfig().attention_text);
     M5.Speaker.tone(1800, 30);
+
+    // Attention は bubble-only より優先。出ていたら即クリアしてログを揃える。
+    if (g_bubbleOnlyActive) {
+      g_bubbleOnlyActive = false;
+      g_bubbleOnlyUntilMs = 0;
+      g_bubbleOnlyRid = 0;
+      g_bubbleOnlyEvType = 0;
+
+      // UI上も消す（Attentionが出るが、状態としては bubble-only を終わらせる）
+      UIMining::instance().setStackchanSpeech("");
+
+      LOG_EVT_INFO("EVT_PRESENT_BUBBLE_ONLY_CLEAR",
+                   "rid=%lu type=%d mode=%d attn=%d reason=attention_start",
+                   (unsigned long)g_bubbleOnlyRid, g_bubbleOnlyEvType,
+                   (int)g_mode, g_attentionActive ? 1 : 0);
+    }
   }
 
   // Attention timeout -> restore mining yield and clear bubble
@@ -593,13 +617,32 @@ static uint32_t s_lastTouchPollMs = 0;
     g_timeNtpDone = true;
   }
 
-
   // --- UI 更新（100ms ごとに1回） ---
   if (now - lastUiMs >= 100) {
     lastUiMs = now;
 
     MiningSummary summary;
     updateMiningSummary(summary);
+
+    // bubble-only auto clear（期限切れ）
+    if (g_bubbleOnlyActive && (int32_t)(g_bubbleOnlyUntilMs - now) <= 0) {
+      g_bubbleOnlyActive = false;
+      g_bubbleOnlyUntilMs = 0;
+
+      // 注意：Stackchan画面かつAttentionが出ていないときだけ空にする
+      // （Attention中に空にすると WHAT? が消えるので）
+      if (g_mode == MODE_STACKCHAN && !g_attentionActive) {
+        UIMining::instance().setStackchanSpeech("");
+      }
+
+      LOG_EVT_INFO("EVT_PRESENT_BUBBLE_ONLY_CLEAR",
+                   "rid=%lu type=%d mode=%d attn=%d reason=timeout",
+                   (unsigned long)g_bubbleOnlyRid, g_bubbleOnlyEvType,
+                   (int)g_mode, g_attentionActive ? 1 : 0);
+
+      g_bubbleOnlyRid = 0;
+      g_bubbleOnlyEvType = 0;
+    }
 
     // (ui is already referenced above)
     UIMining::PanelData data;
@@ -625,7 +668,14 @@ static uint32_t s_lastTouchPollMs = 0;
         if (!isIdleTick) {
           // ★最短の安定化：TTSが絡む（speak=1）イベントでは Avatar の expression を触らない
           //   （Core2 + m5stack-avatar の setExpression が稀にハングする対策）
-          if (!reaction.speak) {
+          //   さらに、バブル専用(Info*)の吹き出しでは表情を変えない（neutralで十分）。
+          const bool isBubbleInfo =
+            (reaction.evType == StackchanEventType::InfoPool) ||
+            (reaction.evType == StackchanEventType::InfoPing) ||
+            (reaction.evType == StackchanEventType::InfoHashrate) ||
+            (reaction.evType == StackchanEventType::InfoShares);
+
+          if (!reaction.speak && !isBubbleInfo) {
             // expression は変化がある時だけ反映（無駄タッチ & ハング率下げ）
             static bool s_hasLastExp = false;
             static m5avatar::Expression s_lastExp = m5avatar::Expression::Neutral;
@@ -648,6 +698,52 @@ static uint32_t s_lastTouchPollMs = 0;
                    "rid=%lu type=%d prio=%d speak=%d suppressed_by_attention=%d applied=%d",
                    (unsigned long)reaction.rid, (int)reaction.evType, (int)reaction.priority,
                    reaction.speak ? 1 : 0, suppressedByAttention ? 1 : 0, appliedToUi ? 1 : 0);
+
+      // ---- bubble-only present (speak=0) ----
+      // 注意：IdleTick は「何も起きてない」扱いで吹き出しも出さない（既存方針）
+      if (g_mode == MODE_STACKCHAN) {
+        // TTSイベントが来たら、bubble-only は邪魔になるので終了扱いにする（音声同期側が吹き出しを管理する）
+        if (reaction.speak && g_bubbleOnlyActive) {
+          g_bubbleOnlyActive = false;
+          g_bubbleOnlyUntilMs = 0;
+
+          if (!g_attentionActive) {
+            UIMining::instance().setStackchanSpeech("");
+          }
+
+          LOG_EVT_INFO("EVT_PRESENT_BUBBLE_ONLY_CLEAR",
+                       "rid=%lu type=%d mode=%d attn=%d reason=tts_event",
+                       (unsigned long)g_bubbleOnlyRid, g_bubbleOnlyEvType,
+                       (int)g_mode, g_attentionActive ? 1 : 0);
+
+          g_bubbleOnlyRid = 0;
+          g_bubbleOnlyEvType = 0;
+        }
+
+        // speak=0 でも text があれば吹き出しを表示する（Attention中は抑制）
+        if (!reaction.speak &&
+            !isIdleTick &&
+            reaction.speechText.length() &&
+            !suppressedByAttention) {
+
+          UIMining::instance().setStackchanSpeech(reaction.speechText);
+
+          g_bubbleOnlyActive = true;
+          g_bubbleOnlyUntilMs = now + BUBBLE_ONLY_SHOW_MS;
+          g_bubbleOnlyRid = reaction.rid;
+          g_bubbleOnlyEvType = (int)reaction.evType;
+
+          LOG_EVT_INFO("EVT_PRESENT_BUBBLE_ONLY_SHOW",
+                       "rid=%lu type=%d prio=%d len=%u mode=%d attn=%d show_ms=%lu text=%s",
+                       (unsigned long)reaction.rid,
+                       (int)reaction.evType, (int)reaction.priority,
+                       (unsigned)reaction.speechText.length(),
+                       (int)g_mode, g_attentionActive ? 1 : 0,
+                       (unsigned long)BUBBLE_ONLY_SHOW_MS,
+                       reaction.speechText.c_str());
+        }
+      }
+
 
       // TTS は speak=1 かつ textあり の時だけ
       if (reaction.speak && reaction.speechText.length()) {

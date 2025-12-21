@@ -111,8 +111,9 @@ public:
 
   // "何？" attention mode: short-lived focus state triggered by tap.
   // durationMs==0 -> clear.
-  void triggerAttention(uint32_t durationMs, const char* text = "WHAT?");
+  void triggerAttention(uint32_t durationMs, const char* text = nullptr);
   bool isAttentionActive() const;
+  void setAttentionDefaultText(const char* text);
 
   // ★ 追加: 目線・まばたき・ゆらぎをまとめて更新
   void updateAvatarLiveliness();
@@ -237,7 +238,8 @@ private:
   // "attention" state ("WHAT?" mode)
   bool     attention_active_    = false;
   uint32_t attention_until_ms_  = 0;
-  String   attention_text_      = "WHAT?";
+  String   attention_default_text_ = "WHAT?";
+  String   attention_text_         = "WHAT?";
 
   // しゃべる/黙る時間（ms=ミリ秒）
   uint32_t stackchan_talk_min_ms_   = 2500;

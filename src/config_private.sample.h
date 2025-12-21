@@ -22,6 +22,9 @@
 #define MC_AZ_SPEECH_KEY    "your-azure-speech-key"
 #define MC_AZ_TTS_VOICE     "ja-JP-AoiNeural"
 
+// Attentionモードで表示するデフォルト吹き出し（ボタンA / タップ）
+#define MC_ATTENTION_TEXT  "Hi there!"
+
 // 任意：Speech リソースのカスタムサブドメイン
 // 例) "my-speech-app"  または  "my-speech-app.cognitiveservices.azure.com"
 #define MC_AZ_CUSTOM_SUBDOMAIN ""

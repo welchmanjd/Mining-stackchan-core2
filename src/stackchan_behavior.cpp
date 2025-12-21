@@ -17,11 +17,18 @@ const char* eventName(StackchanEventType ev) {
     case StackchanEventType::ShareAccepted:    return "ShareAccepted";
     case StackchanEventType::PoolDisconnected: return "PoolDisconnected";
     case StackchanEventType::IdleTick:         return "IdleTick";
+
+    case StackchanEventType::InfoPool:         return "InfoPool";
+    case StackchanEventType::InfoPing:         return "InfoPing";
+    case StackchanEventType::InfoHashrate:     return "InfoHashrate";
+    case StackchanEventType::InfoShares:       return "InfoShares";
+
     case StackchanEventType::None:             return "None";
     case StackchanEventType::Placeholder:      return "Placeholder";
     default:                                   return "Unknown";
   }
 }
+
 
 String shortenText(const String& s, size_t maxChars, size_t& lenOut) {
   lenOut = s.length();
@@ -35,16 +42,27 @@ String shortenText(const String& s, size_t maxChars, size_t& lenOut) {
 }  // namespace
 
 void StackchanBehavior::update(const UIMining::PanelData& panel, uint32_t nowMs) {
+  // snapshot (for bubble-only formatting)
+  infoHrKh_     = panel.hr_kh;
+  infoPingMs_   = panel.ping_ms;
+  infoAccepted_ = panel.accepted;
+  infoRejected_ = panel.rejected;
+  infoPoolName_ = panel.poolName;
+
   if (!poolInit_) {
     poolInit_ = true;
     lastPoolAlive_ = panel.poolAlive;
     lastEventMs_ = nowMs;
+
+    // 15秒周期ローテ（最初の表示も15秒後に）
+    nextInfoMs_ = nowMs + 15000;
+    infoIndex_  = 0;  // POOL から
   }
 
   // Detect: new accepted share
   if (panel.accepted != lastAccepted_) {
     if (panel.accepted > lastAccepted_) {
-      triggerEvent(StackchanEventType::ShareAccepted);
+      triggerEvent(StackchanEventType::ShareAccepted, nowMs);
     }
     lastAccepted_ = panel.accepted;
   }
@@ -57,21 +75,40 @@ void StackchanBehavior::update(const UIMining::PanelData& panel, uint32_t nowMs)
         (panel.poolDiag == "No result response from the pool.");
 
     if (!isTimeoutNoFeedback) {
-      triggerEvent(StackchanEventType::PoolDisconnected);
+      triggerEvent(StackchanEventType::PoolDisconnected, nowMs);
     } else {
       LOG_EVT_INFO("EVT_BEH_SUPPRESS_POOL_DISCONNECT",
-                  "reason=timeout_no_feedback");
+                   "reason=timeout_no_feedback");
     }
   }
   lastPoolAlive_ = panel.poolAlive;
 
+  // ---- periodic bubble-only info rotation (15s): POOL -> PING -> HR -> SHR ----
+  const uint32_t infoPeriodMs = 15000;
+  if (nextInfoMs_ == 0) nextInfoMs_ = nowMs + infoPeriodMs;
 
-  // Idle tick
+  if ((int32_t)(nowMs - nextInfoMs_) >= 0) {
+    StackchanEventType ev = StackchanEventType::InfoPool;
+    switch (infoIndex_ & 0x03) {
+      case 0: ev = StackchanEventType::InfoPool;     break;
+      case 1: ev = StackchanEventType::InfoPing;     break;
+      case 2: ev = StackchanEventType::InfoHashrate; break;
+      case 3: ev = StackchanEventType::InfoShares;   break;
+      default: break;
+    }
+    infoIndex_ = (uint8_t)((infoIndex_ + 1) & 0x03);
+    nextInfoMs_ = nowMs + infoPeriodMs;
+
+    triggerEvent(ev, nowMs);
+  }
+
+  // Idle tick（Infoが15秒で回るので基本出ないが、保険として残す）
   const uint32_t idleMs = 30000;
   if ((uint32_t)(nowMs - lastEventMs_) >= idleMs) {
-    triggerEvent(StackchanEventType::IdleTick);
+    triggerEvent(StackchanEventType::IdleTick, nowMs);
   }
 }
+
 
 void StackchanBehavior::setTtsSpeaking(bool speaking) {
   ttsSpeaking_ = speaking;
@@ -80,8 +117,8 @@ void StackchanBehavior::setTtsSpeaking(bool speaking) {
 bool StackchanBehavior::popReaction(StackchanReaction* out) {
   if (!out || !hasPending_) return false;
 
-  // If TTS is speaking, allow only >= Normal. Low is dropped with a log.
-  if (ttsSpeaking_ && pending_.priority == ReactionPriority::Low) {
+  // If TTS is speaking, drop Low only when it would speak; bubble-only stays.
+  if (ttsSpeaking_ && pending_.priority == ReactionPriority::Low && pending_.speak) {
     LOG_EVT_INFO("EVT_BEH_DROP_LOW_WHILE_BUSY",
                  "rid=%lu type=%s prio=%s speak=%d",
                  (unsigned long)pending_.rid,
@@ -97,7 +134,7 @@ bool StackchanBehavior::popReaction(StackchanReaction* out) {
   return true;
 }
 
-void StackchanBehavior::triggerEvent(StackchanEventType ev) {
+void StackchanBehavior::triggerEvent(StackchanEventType ev, uint32_t nowMs) {
   // Decide -> enqueue one-slot reaction (overwrite).
   StackchanReaction r;
   bool emit = false;
@@ -114,6 +151,7 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev) {
       r.speak      = true;
       emit = true;
       break;
+
     case StackchanEventType::PoolDisconnected:
       r.priority   = ReactionPriority::High;
       r.expression = m5avatar::Expression::Doubt;
@@ -121,6 +159,53 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev) {
       r.speak      = true;
       emit = true;
       break;
+
+    case StackchanEventType::InfoPool: {
+      r.priority   = ReactionPriority::Low;
+      r.expression = m5avatar::Expression::Neutral;
+      // 例: "POOL:Mainnet"
+      String name = infoPoolName_;
+      if (!name.length()) name = "unknown";
+      r.speechText = "POOL:" + name;
+      r.speak      = false;
+      emit = true;
+      break;
+    }
+
+    case StackchanEventType::InfoPing: {
+      r.priority   = ReactionPriority::Low;
+      r.expression = m5avatar::Expression::Neutral;
+      // 例: "PING:42ms" / "PING:--"
+      if (infoPingMs_ >= 0.0f) {
+        r.speechText = "PING:" + String((int)(infoPingMs_ + 0.5f)) + "ms";
+      } else {
+        r.speechText = "PING:--";
+      }
+      r.speak      = false;
+      emit = true;
+      break;
+    }
+
+    case StackchanEventType::InfoHashrate: {
+      r.priority   = ReactionPriority::Low;
+      r.expression = m5avatar::Expression::Neutral;
+      // 例: "HR:12.3kH/s"
+      r.speechText = "HR:" + String(infoHrKh_, 1) + "kH/s";
+      r.speak      = false;
+      emit = true;
+      break;
+    }
+
+    case StackchanEventType::InfoShares: {
+      r.priority   = ReactionPriority::Low;
+      r.expression = m5avatar::Expression::Neutral;
+      // 例: "SHR:10/1" (accepted/rejected)
+      r.speechText = "SHR:" + String(infoAccepted_) + "/" + String(infoRejected_);
+      r.speak      = false;
+      emit = true;
+      break;
+    }
+
     case StackchanEventType::IdleTick:
       r.priority   = ReactionPriority::Low;
       r.expression = m5avatar::Expression::Neutral;
@@ -128,9 +213,11 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev) {
       r.speak      = false;
       emit = true;
       break;
+
     default:
       break;
   }
+
 
   if (emit) {
     size_t newLen = 0, oldLen = 0;
@@ -157,7 +244,7 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev) {
       }
       pending_ = r;
       hasPending_ = true;
-      lastEventMs_ = millis();
+      lastEventMs_ = nowMs;
     } else {
       LOG_EVT_INFO("EVT_BEH_DROP",
                    "rid=%lu type=%s prio=%s speak=%d len=%u text=%s reason=prio_lower",

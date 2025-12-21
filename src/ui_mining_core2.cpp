@@ -34,7 +34,8 @@ void UIMining::begin(const char* appName, const char* appVer) {
   // 繝繝・す繝･繝懊・繝臥畑繝ｬ繧､繧｢繧ｦ繝茨ｼ亥ｷｦ 144x216 鬆伜沺縺ｫ蜿弱∪繧九ｈ縺・↓・・
   avatar_.setScale(0.45f);
   avatar_.setPosition(-12, -88);
-  avatar_.setSpeechFont(&fonts::Font0);
+  // Use a Japanese-capable font (size ~8) so bubble text renders correctly.
+  avatar_.setSpeechFont(&fonts::lgfxJapanMinchoP_12);
   avatar_.setSpeechText("");   // 繝繝・す繝･繝懊・繝峨〒縺ｯ蜷ｹ縺榊・縺励・菴ｿ繧上↑縺・
 
 
@@ -149,7 +150,7 @@ void UIMining::triggerAttention(uint32_t durationMs, const char* text) {
     LOG_EVT_INFO("EVT_ATTENTION_EXIT", "attn=0");
     attention_active_   = false;
     attention_until_ms_ = 0;
-    attention_text_     = "WHAT?";   // 既存挙動維持（不要なら "" にしてもOK）
+    attention_text_     = attention_default_text_;   // 既存挙動維持（不要なら "" にしてもOK）
 
     if (in_stackchan_mode_) {
       // ★重要：avatar_.setSpeechText を直で呼ばない（defer経由に統一）
@@ -160,7 +161,7 @@ void UIMining::triggerAttention(uint32_t durationMs, const char* text) {
 
   attention_active_   = true;
   attention_until_ms_ = millis() + durationMs;
-  attention_text_     = (text && *text) ? String(text) : String("WHAT?");
+  attention_text_     = (text && *text) ? String(text) : attention_default_text_;
   LOG_EVT_INFO("EVT_ATTENTION_ENTER", "attn=1 text=%s", attention_text_.c_str());
 
   if (in_stackchan_mode_) {
@@ -170,6 +171,13 @@ void UIMining::triggerAttention(uint32_t durationMs, const char* text) {
     // 既存仕様に合わせて保持（使ってないなら削除OK）
     stackchan_speech_text_ = attention_text_;
     stackchan_speech_seq_++;
+  }
+}
+
+void UIMining::setAttentionDefaultText(const char* text) {
+  attention_default_text_ = (text && *text) ? String(text) : String("WHAT?");
+  if (!attention_active_) {
+    attention_text_ = attention_default_text_;
   }
 }
 
