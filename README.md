@@ -5,6 +5,10 @@ Mining Stackchan は、M5Stack Core2 上で **控えめに Duino-Coin をマイ�
 
 
 
+https://github.com/user-attachments/assets/2f900ea9-7066-4196-bda3-3fa05a1c0fb4
+
+
+
 https://github.com/user-attachments/assets/d9b9d4f4-2e24-4ef0-8865-677681f195f8
 
 
