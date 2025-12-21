@@ -50,10 +50,21 @@ void StackchanBehavior::update(const UIMining::PanelData& panel, uint32_t nowMs)
   }
 
   // Detect: pool disconnected (true -> false)
+  // NOTE: "no feedback (timeout)" は「未接続」ではなく「応答が来なかった」なので、発話イベントは出さない。
+  //       ダッシュボードでも喋らせない方針を維持するため、ここで PoolDisconnected 自体を抑制する。
   if (poolInit_ && lastPoolAlive_ && !panel.poolAlive) {
-    triggerEvent(StackchanEventType::PoolDisconnected);
+    const bool isTimeoutNoFeedback =
+        (panel.poolDiag == "No result response from the pool.");
+
+    if (!isTimeoutNoFeedback) {
+      triggerEvent(StackchanEventType::PoolDisconnected);
+    } else {
+      LOG_EVT_INFO("EVT_BEH_SUPPRESS_POOL_DISCONNECT",
+                  "reason=timeout_no_feedback");
+    }
   }
   lastPoolAlive_ = panel.poolAlive;
+
 
   // Idle tick
   const uint32_t idleMs = 30000;
