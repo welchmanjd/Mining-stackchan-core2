@@ -3,8 +3,8 @@
 Mining Stackchan は、M5Stack Core2 上で **控えめに Duino-Coin をマイニングしながら**、スタックチャン（M5Stack-Avatar）の挙動を眺めることを主目的としたプロジェクトです。
 
 <p align="center">
-  <img src="images/demo-avatar-mode.mp4" width="400">
-  <img src="images/demo-dashboard-mode.mp4" width="400">
+  <video src="https://github.com/welchmanjd/Mining-stackchan-core2/raw/main/images/demo-avatar-mode.mp4" width="400" autoplay loop muted playsinline></video>
+  <video src="https://github.com/welchmanjd/Mining-stackchan-core2/raw/main/images/demo-dashboard-mode.mp4" width="400" autoplay loop muted playsinline></video>
   <br>
   <em>左：スタックチャンモード / 右：ダッシュボードモード</em>
 </p>
