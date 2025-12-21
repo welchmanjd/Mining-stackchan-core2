@@ -400,6 +400,21 @@ void UIMining::drawStackchanScreen(const PanelData& p) {
   }
 
   // normal stackchan draw
+  // ---- Apply deferred avatar updates (safe point) ----
+  if (stackchan_expr_pending_) {
+    // Avoid noisy logs: only when changed/pending.
+    LOG_EVT_DEBUG("EVT_UI_AVATAR_SET_EXP", "exp=%d", (int)stackchan_expr_desired_);
+    avatar_.setExpression(stackchan_expr_desired_);
+    stackchan_expr_pending_ = false;
+  }
+  if (stackchan_speech_pending_) {
+    // NOTE: This is the most suspicious freeze point; log before/after.
+    LOG_EVT_INFO("EVT_UI_AVATAR_SET_SPEECH", "len=%u", (unsigned)stackchan_speech_desired_.length());
+    avatar_.setSpeechText(stackchan_speech_desired_.c_str());
+    LOG_EVT_INFO("EVT_UI_AVATAR_SET_SPEECH_DONE", "ok=1");
+    stackchan_speech_pending_ = false;
+  }
+
   updateAvatarMood(p);
   updateAvatarLiveliness();
 
@@ -411,21 +426,24 @@ void UIMining::drawStackchanScreen(const PanelData& p) {
 
 
 void UIMining::setStackchanSpeech(const String& text) {
+  // Defer avatar touching to drawStackchanScreen().
+  // (Direct calls to avatar_.setSpeechText() here may freeze on Core2.)
   stackchan_bubble_text_ = text;
-
-  // stackchan 画面以外では avatar の speech を触らない
-  if (!in_stackchan_mode_) return;
-
-  avatar_.setSpeechText(stackchan_bubble_text_.c_str());
+  stackchan_speech_desired_ = stackchan_bubble_text_;
+  stackchan_speech_pending_ = true;
 }
+
 
 
 void UIMining::setStackchanExpression(m5avatar::Expression exp) {
-  avatar_.setExpression(exp);
+  // Defer avatar touching to drawStackchanScreen().
+  stackchan_expr_desired_ = exp;
+  stackchan_expr_pending_ = true;
 }
+
+
 void UIMining::setStackchanSpeechTiming(uint32_t talkMinMs, uint32_t talkVarMs,
                                         uint32_t silentMinMs, uint32_t silentVarMs) {
-  // 0 縺ｯ險ｱ蜿ｯ・茨ｼ晏崋螳壽凾髢薙↓縺ｧ縺阪ｋ・・
   stackchan_talk_min_ms_   = talkMinMs;
   stackchan_talk_var_ms_   = talkVarMs;
   stackchan_silent_min_ms_ = silentMinMs;
@@ -433,7 +451,6 @@ void UIMining::setStackchanSpeechTiming(uint32_t talkMinMs, uint32_t talkVarMs,
 }
 
 
-// 蜷ｹ縺榊・縺励↓蜈･繧後ｋ繝・く繧ｹ繝医ｒ繝ｩ繝ｳ繝繝逕滓・
 String UIMining::buildStackchanBubble(const PanelData& p) {
   int kind = random(0, 6);  // 0縲・
 

@@ -221,6 +221,15 @@ private:
   uint32_t stackchan_phase_dur_ms_   = 0;
   String   stackchan_bubble_text_;
 
+  // ---- Stackchan avatar updates (deferred) ----
+  // M5Stack-Avatar sometimes freezes when setExpression/setSpeechText is called
+  // from outside the draw loop. So we only *request* updates here and apply them
+  // inside drawStackchanScreen().
+  bool                  stackchan_expr_pending_   = false;
+  m5avatar::Expression  stackchan_expr_desired_   = m5avatar::Expression::Neutral;
+  bool                  stackchan_speech_pending_ = false;
+  String                stackchan_speech_desired_;
+
   // 外部(TTS)向け：新しい吹き出しが生成されたら seq++ して text を更新
   uint32_t stackchan_speech_seq_ = 0;
   String   stackchan_speech_text_;

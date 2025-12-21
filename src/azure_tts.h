@@ -4,30 +4,25 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 
-// Azure TTS を「取得(HTTPS)→WAV再生(M5Unified)」までやる最小モジュール。
+// Azure TTS を「取得(HTTPS)→WAV再生(M5Unified)」まで行う最小モジュール。
 // ・speakAsync() でHTTP取得は別タスク
-// ・loop() から poll() を呼ぶと、準備完了したWAVを再生し、終了後にfreeする
-//
-// 追加(2025-12):
-// ・HTTPS接続をできるだけ使い回す(keep-alive)ことでラグ短縮を狙う
-// ・Wi-Fi切断を検知したら、次回に備えてHTTP/TLSセッションを捨てる
-
+// ・loop() から poll() を呼ぶと、準備完了したWAVを再生し、終わったらfreeする
 class AzureTts {
 public:
-  // config_private.h の MC_AZ_* から設定する（begin() だけでOK）
+  // config_private.h の MC_AZ_* から設定する。begin() だけでOK。
   void begin(uint8_t volume = 180);
 
-  // 1回しゃべらせる（非同期で取得→poll()で再生開始）
-  // 返り値 false は「WiFi未接続」「設定不足」「すでに処理中」など
-  bool speakAsync(const String& text, const char* voice = nullptr);
+  // 1回しゃべらせる（非同期で取得。poll()で再生開始）。返り値 false は「WiFi未接続」「設定不足」「すでに処理中」など。
+  bool speakAsync(const String& text, uint32_t speakId, const char* voice = nullptr);
+  bool speakAsync(const String& text, const char* voice = nullptr) { return speakAsync(text, 0, voice); }
 
-  // main loop から毎フレーム呼ぶ（再生開始・終了処理・メモリ解放）
+  // main loop から毎フレーム呼ぶ。再生開始/終了/解放を処理。
   void poll();
 
   bool isBusy() const;
+  bool consumeDone(uint32_t* outId);
 
-  // Wi-Fi切断などでセッションが壊れていそうな時に呼ぶ。
-  // ※実際の破棄は安全なタイミング(Idle)で行う
+  // Wi-Fi断などでセッションが壊れていそうな時に呼ぶ。※実際の破棄は安定なタイミング(Idle)で行う
   void requestSessionReset();
 
   struct RuntimeConfig {
@@ -85,7 +80,7 @@ private:
   bool dnsWarmed_ = false;
 
   String   token_;
-  uint32_t tokenExpireMs_ = 0;   // ★追加：トークン有効期限(millis基準)
+  uint32_t tokenExpireMs_ = 0;   // トークン有効期限(millis基準)
 
   // token fetch backoff (to avoid stalling every speak when STS is flaky)
   uint32_t tokenFailUntilMs_ = 0;
@@ -97,6 +92,8 @@ private:
 private:
   volatile State state_ = Idle;
   TaskHandle_t   task_  = nullptr;
+  uint32_t currentSpeakId_ = 0;
+  volatile uint32_t doneSpeakId_ = 0;
 
   // request (Idle→Fetching の間だけ保持)
   String reqText_;
@@ -116,7 +113,7 @@ private:
   HTTPClient       https_;
   bool             keepaliveEnabled_ = true;
 
-  // Wi-Fi切断等を検知したら true (Idleになったタイミングで resetSession_ する)
+  // Wi-Fi断等を検知したらtrue (Idleになったタイミングで resetSession_ する)
   volatile bool sessionResetPending_ = false;
 
   uint32_t last_ok_ms_ = 0;                 // 最後に正常に音声を取れた時刻
@@ -129,4 +126,3 @@ private:
   LastResult last_;
 
 };
-

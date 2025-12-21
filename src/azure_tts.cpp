@@ -18,6 +18,8 @@
 
 #if defined(ESP32)
   #include <esp_heap_caps.h>
+  #include "freertos/FreeRTOS.h"
+  #include "freertos/portmacro.h"
 #endif
 
 #include "logging.h"
@@ -52,6 +54,16 @@
 // ----------------------------------------------------------
 
 namespace {
+
+// doneSpeakId_ 保護用 (ESP32 only; otherwise no-op)
+#if defined(ESP32)
+static portMUX_TYPE s_ttsDoneMux = portMUX_INITIALIZER_UNLOCKED;
+#define TTS_DONE_CRITICAL_ENTER() portENTER_CRITICAL(&s_ttsDoneMux)
+#define TTS_DONE_CRITICAL_EXIT()  portEXIT_CRITICAL(&s_ttsDoneMux)
+#else
+#define TTS_DONE_CRITICAL_ENTER()
+#define TTS_DONE_CRITICAL_EXIT()
+#endif
 
 static String buildEndpointFromRegion_(const char* region) {
   if (!region || !region[0]) return String("");
@@ -486,8 +498,14 @@ void AzureTts::resetSession_() {
   mc_logf("[TTS] session reset");
 }
 
-bool AzureTts::speakAsync(const String& text, const char* voice) {
+bool AzureTts::speakAsync(const String& text, uint32_t speakId, const char* voice) {
+  currentSpeakId_ = 0;
   if (isBusy()) return false;
+
+  // 新規開始前に完了キューを空に
+  TTS_DONE_CRITICAL_ENTER();
+  doneSpeakId_ = 0;
+  TTS_DONE_CRITICAL_EXIT();
 
   // start new seq
   last_ = LastResult();
@@ -501,16 +519,19 @@ bool AzureTts::speakAsync(const String& text, const char* voice) {
 
   if (WiFi.status() != WL_CONNECTED) {
     mc_logf("[TTS] WiFi not connected");
+    currentSpeakId_ = 0;
     return false;
   }
 
   if (endpoint_.length() == 0 || key_.length() == 0) {
     mc_logf("[TTS] Azure config missing (endpoint/key)");
+    currentSpeakId_ = 0;
     return false;
   }
 
   reqText_  = text;
   reqVoice_ = (voice && voice[0]) ? String(voice) : defaultVoice_;
+  currentSpeakId_ = speakId;
 
   state_ = Fetching;
 
@@ -528,6 +549,7 @@ bool AzureTts::speakAsync(const String& text, const char* voice) {
     mc_logf("[TTS] task create failed");
     task_ = nullptr;
     state_ = Idle;
+    currentSpeakId_ = 0;
     return false;
   }
   return true;
@@ -545,6 +567,19 @@ void AzureTts::poll() {
       wav_ = nullptr;
       wavLen_ = 0;
     }
+    bool hadPending = false;
+    TTS_DONE_CRITICAL_ENTER();
+    if (doneSpeakId_ != 0) {
+      hadPending = true;
+    } else {
+      doneSpeakId_ = currentSpeakId_;
+    }
+    TTS_DONE_CRITICAL_EXIT();
+    if (hadPending) {
+      mc_logf("[TTS] warn: doneSpeakId pending -> dropping new=%lu",
+              (unsigned long)currentSpeakId_);
+    }
+    currentSpeakId_ = 0;
     state_ = Idle;
     return;
   }
@@ -606,9 +641,36 @@ void AzureTts::poll() {
       wav_ = nullptr;
       wavLen_ = 0;
       state_ = Idle;
+      bool hadPending = false;
+      TTS_DONE_CRITICAL_ENTER();
+      if (doneSpeakId_ != 0) {
+        hadPending = true;
+      } else {
+        doneSpeakId_ = currentSpeakId_;
+      }
+      TTS_DONE_CRITICAL_EXIT();
+      if (hadPending) {
+        mc_logf("[TTS] warn: doneSpeakId pending -> dropping new=%lu",
+                (unsigned long)currentSpeakId_);
+      }
+      currentSpeakId_ = 0;
     }
     return;
   }
+}
+
+bool AzureTts::consumeDone(uint32_t* outId) {
+  if (!outId) return false;
+  uint32_t v = 0;
+  TTS_DONE_CRITICAL_ENTER();
+  v = doneSpeakId_;
+  if (v != 0) {
+    doneSpeakId_ = 0;
+  }
+  TTS_DONE_CRITICAL_EXIT();
+  if (v == 0) return false;
+  *outId = v;
+  return true;
 }
 
 
