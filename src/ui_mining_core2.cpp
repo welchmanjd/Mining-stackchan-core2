@@ -35,7 +35,7 @@ void UIMining::begin(const char* appName, const char* appVer) {
   avatar_.setScale(0.45f);
   avatar_.setPosition(-12, -88);
   // Use a Japanese-capable font (size ~8) so bubble text renders correctly.
-  avatar_.setSpeechFont(&fonts::lgfxJapanMinchoP_12);
+  avatar_.setSpeechFont(&fonts::lgfxJapanMinchoP_8);
   avatar_.setSpeechText("");   // 繝繝・す繝･繝懊・繝峨〒縺ｯ蜷ｹ縺榊・縺励・菴ｿ繧上↑縺・
 
 
@@ -372,13 +372,26 @@ void UIMining::drawStackchanScreen(const PanelData& p) {
 
   // 最初の1フレームだけ前の画面を消す
   if (stackchan_needs_clear_) {
-    d.fillScreen(BLACK);
+    d.fillScreen(BLACK);   // 吹き出し残像対策：必要なときだけ全面クリア
     stackchan_needs_clear_ = false;
   }
 
   // スタックチャン専用レイアウト（大きめ）
   avatar_.setScale(1.0f);
-  avatar_.setPosition(0, 0);
+  // 吹き出し高さを推定して、下方向にはみ出す場合は上にオフセットする
+  int bubbleLines = 1;
+  for (int i = 0; i < stackchan_bubble_text_.length(); ++i) {
+    if (stackchan_bubble_text_.charAt(i) == '\n') bubbleLines++;
+  }
+  const int bubbleHeight = 32 + bubbleLines * 16;  // 吹き出し枠 + 行高目安
+  int offsetY = 0;
+  const int margin = 4;          // 下端に残す余白
+  const int availableH = H;      // 画面高さ
+  int overflow = (bubbleHeight + margin) - availableH;
+  if (overflow > 0) {
+    offsetY = -overflow;
+  }
+  avatar_.setPosition(offsetY, 0);
 
   // ---- UI heartbeat (log meaning: "UI draw loop alive") ----
   // Log only on attention state changes and with low-rate heartbeat.
@@ -433,9 +446,30 @@ void UIMining::drawStackchanScreen(const PanelData& p) {
 void UIMining::setStackchanSpeech(const String& text) {
   // Defer avatar touching to drawStackchanScreen().
   // (Direct calls to avatar_.setSpeechText() here may freeze on Core2.)
-  stackchan_bubble_text_ = text;
+  // Format: trim to 20 chars and insert a manual wrap to keep the balloon narrow.
+  auto formatBubble = [](const String& in) -> String {
+    const size_t maxLen = 20;
+    String s = in;
+    if (s.length() > maxLen) {
+      s = s.substring(0, maxLen);
+      s += "…";  // ellipsis after trim
+    }
+
+    // Insert a newline after ~8 chars to clamp width (only if there's more than 8 chars).
+    const size_t wrapPos = 8;
+    if (s.length() > wrapPos) {
+      String first = s.substring(0, wrapPos);
+      String rest  = s.substring(wrapPos);
+      s = first + "\n" + rest;
+    }
+    return s;
+  };
+
+  stackchan_bubble_text_ = formatBubble(text);
   stackchan_speech_desired_ = stackchan_bubble_text_;
   stackchan_speech_pending_ = true;
+  // 吹き出しの描き換え時に背景をクリアするためのフラグ
+  stackchan_needs_clear_ = true;
 }
 
 

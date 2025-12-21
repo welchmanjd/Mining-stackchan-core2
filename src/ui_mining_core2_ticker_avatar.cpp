@@ -193,6 +193,9 @@ void UIMining::updateAvatarMood(const PanelData& p) {
 void UIMining::updateAvatarLiveliness() {
   uint32_t now = millis();
 
+  // bubble text showing? used to modify gaze/mouth behavior
+  const bool bubble_active = in_stackchan_mode_ && (stackchan_bubble_text_.length() > 0);
+
   // 機嫌度で「元気さ」を決める（0.6〜1.2）
   float energy = 0.9f;      // neutral
   float eyeOpen = 1.0f;     // 開き具合（sad で少し細め）
@@ -244,7 +247,9 @@ void UIMining::updateAvatarLiveliness() {
   }
 
   // --- 目線のサッカード（視線ジャンプ） ---
-  if (now - s.last_saccade_ms > s.saccade_interval) {
+  if (bubble_active) {
+    avatar_.setGaze(0.0f, 0.0f);
+  } else if (now - s.last_saccade_ms > s.saccade_interval) {
     s.vertical   = (((float)random(-1000, 1001)) / 1000.0f) * gazeAmp;
     s.horizontal = (((float)random(-1000, 1001)) / 1000.0f) * gazeAmp;
 
@@ -292,6 +297,15 @@ void UIMining::updateAvatarLiveliness() {
 
   float breath = sinf(s.count * 2.0f * PI / 100.0f);
   avatar_.setBreath(breath * energy);
+
+  // 口パク：吹き出し中だけ大きく開ける／それ以外は閉口
+  if (bubble_active) {
+    float t = millis() * 0.02f;
+    float mouth = 0.35f + 0.35f * (sinf(t) * 0.5f + 0.5f);  // 0.35〜0.7 くらいで開閉
+    avatar_.setMouthOpenRatio(mouth);
+  } else {
+    avatar_.setMouthOpenRatio(0.0f);
+  }
 
 
   // === ★ 追加：顔全体の位置ゆらぎ（スタックチャン画面だけ） ===

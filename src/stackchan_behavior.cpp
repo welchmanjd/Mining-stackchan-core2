@@ -147,7 +147,7 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev, uint32_t nowMs) {
     case StackchanEventType::ShareAccepted:
       r.priority   = ReactionPriority::High;
       r.expression = m5avatar::Expression::Happy;
-      r.speechText = "やったね! シェア獲得だよ!";
+      r.speechText = "シェア獲得したよ!";
       r.speak      = true;
       emit = true;
       break;

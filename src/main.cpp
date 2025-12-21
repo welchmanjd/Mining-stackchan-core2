@@ -73,7 +73,15 @@ static bool     g_bubbleOnlyActive = false;
 static uint32_t g_bubbleOnlyUntilMs = 0;
 static uint32_t g_bubbleOnlyRid = 0;
 static int      g_bubbleOnlyEvType = 0;
-static const uint32_t BUBBLE_ONLY_SHOW_MS = 4500; // 表示時間（お好みで）
+// 吹き出し表示時間を文字数に合わせて可変にする
+static uint32_t bubbleShowMs(const String& text) {
+  const size_t len = text.length();
+  // ベース1.5s + 120ms/文字、上限8s（お好みで調整）
+  uint32_t ms = 1500 + (uint32_t)(len * 120);
+  const uint32_t maxMs = 8000;
+  if (ms > maxMs) ms = maxMs;
+  return ms;
+}
 
 // ReactionPriority -> OrchPrio 螟画鋤螳｣險
 static OrchPrio toOrchPrio(ReactionPriority p);
@@ -729,7 +737,8 @@ static uint32_t s_lastTouchPollMs = 0;
           UIMining::instance().setStackchanSpeech(reaction.speechText);
 
           g_bubbleOnlyActive = true;
-          g_bubbleOnlyUntilMs = now + BUBBLE_ONLY_SHOW_MS;
+          const uint32_t showMs = bubbleShowMs(reaction.speechText);
+          g_bubbleOnlyUntilMs = now + showMs;
           g_bubbleOnlyRid = reaction.rid;
           g_bubbleOnlyEvType = (int)reaction.evType;
 
@@ -739,7 +748,7 @@ static uint32_t s_lastTouchPollMs = 0;
                        (int)reaction.evType, (int)reaction.priority,
                        (unsigned)reaction.speechText.length(),
                        (int)g_mode, g_attentionActive ? 1 : 0,
-                       (unsigned long)BUBBLE_ONLY_SHOW_MS,
+                       (unsigned long)showMs,
                        reaction.speechText.c_str());
         }
       }
