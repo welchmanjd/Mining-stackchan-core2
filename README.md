@@ -7,7 +7,7 @@ Mining Stackchan は、M5Stack Core2 上で **控えめに Duino-Coin をマイ�
   <video src="https://github.com/welchmanjd/Mining-stackchan-core2/raw/main/images/demo-dashboard-mode.mp4" width="400" autoplay loop muted playsinline></video>
   <br>
   <em>左：スタックチャン・モード / 右：ダッシュボード・モード</em>
-</p>
+</p>>
 
 v0.50 では内部構造を整理し、「喋る / 黙る / 反応する」が破綻しない、落ち着いた振る舞いを目指しました。
 
