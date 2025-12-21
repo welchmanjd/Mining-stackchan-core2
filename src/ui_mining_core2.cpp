@@ -142,14 +142,18 @@ void UIMining::onLeaveStackchanMode() {
   // 笘・縺薙％縺ｧ繧・avatar_.stop() 縺ｯ蜻ｼ縺ｰ縺ｪ縺・ｼ医◎繧ゅ◎繧・start 縺励※縺・↑縺・ｼ・
 }
 
+
+
 void UIMining::triggerAttention(uint32_t durationMs, const char* text) {
   if (durationMs == 0) {
     LOG_EVT_INFO("EVT_ATTENTION_EXIT", "attn=0");
     attention_active_   = false;
     attention_until_ms_ = 0;
-    attention_text_     = "WHAT?";
+    attention_text_     = "WHAT?";   // 既存挙動維持（不要なら "" にしてもOK）
+
     if (in_stackchan_mode_) {
-      avatar_.setSpeechText("");
+      // ★重要：avatar_.setSpeechText を直で呼ばない（defer経由に統一）
+      setStackchanSpeech("");
     }
     return;
   }
@@ -160,13 +164,15 @@ void UIMining::triggerAttention(uint32_t durationMs, const char* text) {
   LOG_EVT_INFO("EVT_ATTENTION_ENTER", "attn=1 text=%s", attention_text_.c_str());
 
   if (in_stackchan_mode_) {
-    avatar_.setSpeechText(attention_text_.c_str());
+    // ★重要：avatar_.setSpeechText を直で呼ばない（defer経由に統一）
+    setStackchanSpeech(attention_text_);
 
-    // 笘・TS逕ｨ・哂ttention縲檎匱蜍墓凾縲阪↓騾夂衍
+    // 既存仕様に合わせて保持（使ってないなら削除OK）
     stackchan_speech_text_ = attention_text_;
     stackchan_speech_seq_++;
   }
 }
+
 
 
 bool UIMining::isAttentionActive() const {
@@ -380,24 +386,15 @@ void UIMining::drawStackchanScreen(const PanelData& p) {
     s_prevAttnActive = attnActiveNow;
   }
 
-  // ===== Attention override ("WHAT?" mode) =====
+  // ===== REPLACE START: Attention override block (disable) =====
+  // NOTE: Core2 + m5stack-avatar で setSpeechText / draw 周りがハングしうるため、
+  // Attention専用の上書き描画は無効化する。
+  // Attention表示は setStackchanSpeech()（defer経由）に任せる。
   if (attention_active_) {
-    if ((int32_t)(attention_until_ms_ - now) > 0) {
-      avatar_.setSpeechText(attention_text_.c_str());
-
-      updateAvatarMood(p);
-      updateAvatarLiveliness();
-
-      d.setClipRect(0, 0, W, H);
-      avatar_.draw();
-      d.clearClipRect();
-      return;
-    }
-
-    // timeout
-    attention_active_ = false;
-    avatar_.setSpeechText("");
+    // ここで return しない。通常描画を続行する。
   }
+  // ===== REPLACE END =====
+
 
   // normal stackchan draw
   // ---- Apply deferred avatar updates (safe point) ----

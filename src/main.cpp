@@ -196,8 +196,8 @@ void setup() {
   mc_logf("[MAIN] setup() start");
 
   // --- CPUクロックを最大に ---
-  setCpuFrequencyMhz(240);
-
+  setCpuFrequencyMhz(180); //熱いので240から下げた。そのうち熱を監視して変えられるようにしたい。
+  
   // --- M5Unified 縺ｮ險ｭ螳・---
   auto cfg_m5 = M5.config();
   cfg_m5.output_power  = true;   // 外部5VはON
@@ -623,14 +623,18 @@ static uint32_t s_lastTouchPollMs = 0;
 
       if (g_mode == MODE_STACKCHAN) {
         if (!isIdleTick) {
-          // expression は変化がある時だけ反映（無駄タッチ & ハング率下げ）
-          static bool s_hasLastExp = false;
-          static m5avatar::Expression s_lastExp = m5avatar::Expression::Neutral;
+          // ★最短の安定化：TTSが絡む（speak=1）イベントでは Avatar の expression を触らない
+          //   （Core2 + m5stack-avatar の setExpression が稀にハングする対策）
+          if (!reaction.speak) {
+            // expression は変化がある時だけ反映（無駄タッチ & ハング率下げ）
+            static bool s_hasLastExp = false;
+            static m5avatar::Expression s_lastExp = m5avatar::Expression::Neutral;
 
-          if (!s_hasLastExp || reaction.expression != s_lastExp) {
-            ui.setStackchanExpression(reaction.expression);
-            s_lastExp = reaction.expression;
-            s_hasLastExp = true;
+            if (!s_hasLastExp || reaction.expression != s_lastExp) {
+              ui.setStackchanExpression(reaction.expression);
+              s_lastExp = reaction.expression;
+              s_hasLastExp = true;
+            }
           }
 
           appliedToUi = true;
@@ -638,9 +642,6 @@ static uint32_t s_lastTouchPollMs = 0;
           // IdleTick: UI側に任せる
           appliedToUi = false;
         }
-      } else {
-        // Dashboard中はStackchan avatar を触らない
-        appliedToUi = false;
       }
 
       LOG_EVT_INFO("EVT_PRESENT_UI_APPLY",
