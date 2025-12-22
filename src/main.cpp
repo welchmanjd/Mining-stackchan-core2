@@ -1,4 +1,4 @@
-﻿// src/main.cpp
+// src/main.cpp
 // ===== Mining-chan Core2 — main entry (UI + orchestrator) =====
 // Board   : M5Stack Core2
 // Libs    : M5Unified, ArduinoJson, WiFi, WiFiClientSecure, HTTPClient, m5stack-avatar
@@ -83,7 +83,7 @@ static uint32_t bubbleShowMs(const String& text) {
   return ms;
 }
 
-// ReactionPriority -> OrchPrio 螟画鋤螳｣險
+// ReactionPriority -> OrchPrio 変換宣言
 static OrchPrio toOrchPrio(ReactionPriority p);
 
 // ===== 自動スリープ関連 =====
@@ -146,7 +146,7 @@ static void applyMiningPolicyForTts(bool ttsBusy) {
 static bool wifi_connect() {
   const auto& cfg = appConfig();
 
-  // 迥ｶ諷九ｒ static 縺ｧ菫晄戟
+  // 状態を static で保持
   enum WifiState {
     WIFI_NOT_STARTED,
     WIFI_CONNECTING,
@@ -214,7 +214,7 @@ void setup() {
   // --- CPUクロックを最大に ---
   setCpuFrequencyMhz(180); //熱いので240から下げた。そのうち熱を監視して変えられるようにしたい。
   
-  // --- M5Unified 縺ｮ險ｭ螳・---
+  // --- M5Unified の設定 ---
   auto cfg_m5 = M5.config();
   cfg_m5.output_power  = true;   // 外部5VはON
   cfg_m5.clear_display = true;   // 起動時に画面クリア
@@ -853,10 +853,10 @@ static uint32_t s_lastTouchPollMs = 0;
     displaySleeping = true;
   }
 
-  // ---- TTS中のマイニング負荷制御�E�捨てなぁE���E�E----
-  // ・再生中: applyMiningPolicyForTts() ぁEpause する�E�EOB維持E��E
-  // ・取得中/準備中: STOP(0)はJOBを捨てめE��ぁE�Eで、ここでは yield 強化に留めめE
-  // ・Attention(WHAT?) ぁEyield を管琁E��てぁE��時�E、そちらを優先すめE
+  // ---- TTS中のマイニング負荷制御（捨てない版） ----
+  // ・再生中: applyMiningPolicyForTts() が pause する（JOB維持）
+  // ・取得中/準備中: STOP(0)はJOBを捨てやすいので、ここでは yield 強化に留める
+  // ・Attention(WHAT?) が yield を管理している時は、そちらを優先する
   static bool s_ttsYieldApplied = false;
   static MiningYieldProfile s_ttsSavedYield = MiningYieldNormal();
   static bool s_ttsSavedYieldValid = false;
@@ -894,7 +894,7 @@ static uint32_t s_lastTouchPollMs = 0;
 
 
 
-// ReactionPriority -> OrchPrio 螟画鋤
+// ReactionPriority -> OrchPrio 変換
 static OrchPrio toOrchPrio(ReactionPriority p) {
   switch (p) {
     case ReactionPriority::Low:    return OrchPrio::Low;

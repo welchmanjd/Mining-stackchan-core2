@@ -1,4 +1,4 @@
-﻿// src/ui_mining_core2.cpp
+// src/ui_mining_core2.cpp
 #include "ui_mining_core2.h"
 #include <WiFi.h>
 #include "logging.h"
@@ -30,23 +30,23 @@ void UIMining::begin(const char* appName, const char* appVer) {
   d.setRotation(1);
   d.setBrightness(128);
 
-  // ===== Avatar 蛻晄悄蛹・=====
-  // 繝繝・す繝･繝懊・繝臥畑繝ｬ繧､繧｢繧ｦ繝茨ｼ亥ｷｦ 144x216 鬆伜沺縺ｫ蜿弱∪繧九ｈ縺・↓・・
+  // ===== Avatar 初期化 =====
+  // ダッシュボード用レイアウト（左 144x216 領域に収まるように）
   avatar_.setScale(0.45f);
   avatar_.setPosition(-12, -88);
   // Use a Japanese-capable font (size ~8) so bubble text renders correctly.
   avatar_.setSpeechFont(&fonts::lgfxJapanMinchoP_8);
-  avatar_.setSpeechText("");   // 繝繝・す繝･繝懊・繝峨〒縺ｯ蜷ｹ縺榊・縺励・菴ｿ繧上↑縺・
+  avatar_.setSpeechText("");   // ダッシュボードでは吹き出しは使わない
 
 
-  // ===== 蜿ｳ繝代ロ繝ｫ逕ｨ繧ｹ繝励Λ繧､繝・=====
+  // ===== 右パネル用スプライト =====
   info_.setColorDepth(8);
-  info_.createSprite(INF_W, INF_H);  // 竊・enum 縺ｧ螳夂ｾｩ縺輔ｌ縺ｦ縺・ｋ蜷榊燕縺ｫ蜷医ｏ縺帙ｋ
+  info_.createSprite(INF_W, INF_H);  // ← enum で定義されている名前に合わせる
   info_.setTextWrap(false);
 
-  // ===== 繝・ぅ繝・き繝ｼ逕ｨ繧ｹ繝励Λ繧､繝・=====
+  // ===== ティッカー用スプライト =====
   tick_.setColorDepth(8);
-  tick_.createSprite(W, LOG_H);      // 竊・繝ｭ繧ｰ鬆伜沺縺ｮ鬮倥＆縺ｯ LOG_H 繧剃ｽｿ縺・
+  tick_.createSprite(W, LOG_H);      // ← ログ領域の高さは LOG_H を使う
   tick_.setTextWrap(false);
 
 
@@ -56,26 +56,26 @@ void UIMining::begin(const char* appName, const char* appVer) {
 
   ticker_offset_ = W;
 
-  // 襍ｷ蜍墓凾繧ｹ繝励Λ繝・す繝･繧貞・譛溷喧
+  // 起動時スプラッシュを初期化
   splash_active_   = true;
   splash_start_ms_ = millis();
-  splash_ready_ms_ = 0;   // 縲悟・驛ｨOK縺ｫ縺ｪ縺｣縺滓凾蛻ｻ縲阪ｒ繝ｪ繧ｻ繝・ヨ
+  splash_ready_ms_ = 0;   // 「全部OKになった時刻」をリセット
 
-  // 譛蛻昴・縲係iFi Connecting縲阪訓ool Waiting縲阪°繧峨せ繧ｿ繝ｼ繝茨ｼ郁ｨｺ譁ｭ縺ｯ縺ｾ縺遨ｺ・・
+  // 最初は「WiFi Connecting」「Pool Waiting」からスタート（診断はまだ空）
   splash_wifi_text_  = "Connecting...";
   splash_pool_text_  = "Waiting";
-  splash_wifi_col_   = 0xFD20;     // 繧ｪ繝ｬ繝ｳ繧ｸ
-  splash_pool_col_   = COL_LABEL;  // 繧ｰ繝ｬ繝ｼ
+  splash_wifi_col_   = 0xFD20;     // オレンジ
+  splash_pool_col_   = COL_LABEL;  // グレー
   splash_wifi_hint_  = "";
   splash_pool_hint_  = "";
 
-  // 繧ｹ繝励Λ繝・す繝･1繝輔Ξ繝ｼ繝逶ｮ繧呈緒逕ｻ
+  // スプラッシュ1フレーム目を描画
   drawSplash(splash_wifi_text_,  splash_wifi_col_,
              splash_pool_text_,  splash_pool_col_,
              splash_wifi_hint_,  splash_pool_hint_);
 
 
-  // 笘・せ繝励Λ繝・す繝･荳ｭ縺ｯ繝・ぅ繝・き繝ｼ繧呈ｶ育・・磯ｻ偵〒蝪励ｊ縺､縺ｶ縺暦ｼ・
+  // ★スプラッシュ中はティッカーを消灯（黒で塗りつぶし）
   tick_.fillScreen(BLACK);
   tick_.pushSprite(0, Y_LOG);
 }
@@ -107,19 +107,19 @@ void UIMining::onEnterStackchanMode() {
   in_stackchan_mode_     = true;
   stackchan_needs_clear_ = true;
 
-  // 縲後＠繧・∋繧・鮟吶ｋ縲咲憾諷九ｒ繝ｪ繧ｻ繝・ヨ
+  // 「しゃべる/黙る」状態をリセット
   stackchan_talking_        = false;
   stackchan_phase_start_ms_ = millis();
-  stackchan_phase_dur_ms_   = 0;   // 谺｡縺ｮ drawStackchanScreen() 縺ｧ髢句ｧ・
+  stackchan_phase_dur_ms_   = 0;   // 次の drawStackchanScreen() で開始
   stackchan_bubble_text_    = "";
 
-  // 繧ｹ繧ｿ繝・け繝√Ε繝ｳ逕ｻ髱｢縺ｧ縺ｯ繝輔Ν繧ｹ繧ｯ繝ｪ繝ｼ繝ｳ蟇・ｊ繝ｬ繧､繧｢繧ｦ繝・
+  // スタックチャン画面ではフルスクリーン寄りレイアウト
   avatar_.setScale(1.0f);
   avatar_.setPosition(0, 0);
 
-  // 逕ｻ髱｢蛻・ｊ譖ｿ縺育峩蠕後・辟｡險縲ゅユ繧ｭ繧ｹ繝医・ drawStackchanScreen 蛛ｴ縺ｧ譖ｴ譁ｰ
+  // 画面切り替え直後は無言。テキストは drawStackchanScreen 側で更新
   avatar_.setSpeechText("");
-  // 笘・avatar_.start() 縺ｯ菴ｿ繧上↑縺・ｼ郁・蜍墓緒逕ｻ繧ｿ繧ｹ繧ｯ縺ｯ蟆∝魂・・
+  // ★ avatar_.start() は使わない（自動描画タスクは封印）
 }
 
 
@@ -127,20 +127,20 @@ void UIMining::onLeaveStackchanMode() {
   in_stackchan_mode_     = false;
   stackchan_needs_clear_ = false;
 
-  // 蠢ｵ縺ｮ縺溘ａ縲後＠繧・∋繧・鮟吶ｋ縲咲憾諷九ｒ蛛懈ｭ｢
+  // 念のため「しゃべる/黙る」状態を停止
   stackchan_talking_        = false;
   stackchan_phase_start_ms_ = 0;
   stackchan_phase_dur_ms_   = 0;
   stackchan_bubble_text_    = "";
 
-  // 蜷ｹ縺榊・縺励ｒ豸医＠縺ｦ縺翫￥
+  // 吹き出しを消しておく
   avatar_.setSpeechText("");
 
-  // 繝繝・す繝･繝懊・繝臥畑繝ｬ繧､繧｢繧ｦ繝医↓謌ｻ縺呻ｼ亥ｷｦ繝代ロ繝ｫ迚茨ｼ・
+  // ダッシュボード用レイアウトに戻す（左パネル版）
   avatar_.setScale(0.45f);
   avatar_.setPosition(-12, -88);
 
-  // 笘・縺薙％縺ｧ繧・avatar_.stop() 縺ｯ蜻ｼ縺ｰ縺ｪ縺・ｼ医◎繧ゅ◎繧・start 縺励※縺・↑縺・ｼ・
+  // ★ ここでも avatar_.stop() は呼ばない（そもそも start していない）
 }
 
 
@@ -196,15 +196,15 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText, bool suppre
   uint32_t now = millis();
 
 
-   // ===== 襍ｷ蜍輔せ繝励Λ繝・す繝･縺ｮ陦ｨ遉ｺ繝ｻ驕ｷ遘ｻ邂｡逅・=====
+   // ===== 起動スプラッシュの表示・遷移管理 =====
   if (splash_active_) {
     wl_status_t w = WiFi.status();
     uint32_t    dt_splash = now - splash_start_ms_;
 
-    // 笘・"Connecting", "Connecting..", ... 繧定｡後▲縺溘ｊ譚･縺溘ｊ縺輔○繧・
+    // ★ "Connecting", "Connecting..", ... を行ったり来たりさせる
     auto makeConnecting = [&](const char* base) -> String {
       uint32_t elapsed = now - splash_start_ms_;
-      const uint32_t period = 200;  // 0.2遘偵＃縺ｨ縺ｫ螟牙喧
+      const uint32_t period = 200;  // 0.2秒ごとに変化
       uint32_t phase = (elapsed / period) % 6;
       uint8_t dots;
       if (phase <= 3) dots = 1 + phase;  // 1,2,3,4
@@ -217,48 +217,48 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText, bool suppre
       return s;
     };
 
-    // --- WiFi 繝ｩ繧､繝ｳ ---
+    // --- WiFi ライン ---
     String   wifiText;
     uint16_t wifiCol;
     if (w == WL_CONNECTED) {
       wifiText = "OK";
-      wifiCol  = 0x07E0;    // 邱・
+      wifiCol  = 0x07E0;    // 緑
     } else if (dt_splash < 10000) {
       wifiText = makeConnecting("Connecting");
-      wifiCol  = 0xFD20;    // 繧ｪ繝ｬ繝ｳ繧ｸ
+      wifiCol  = 0xFD20;    // オレンジ
     } else if (dt_splash < 15000) {
       wifiText = makeConnecting("Retrying");
-      wifiCol  = 0xFD20;    // 繧ｪ繝ｬ繝ｳ繧ｸ
+      wifiCol  = 0xFD20;    // オレンジ
     } else {
       wifiText = "NG";
-      wifiCol  = 0xF800;    // 襍､
+      wifiCol  = 0xF800;    // 赤
     }
 
-    // --- Pool 繝ｩ繧､繝ｳ ---
+    // --- Pool ライン ---
     String   poolText;
     uint16_t poolCol;
     bool     wifi_ok = (w == WL_CONNECTED);
 
     if (!wifi_ok) {
-      // WiFi 縺後∪縺縺ｪ繧峨・繝ｼ繝ｫ繧ょｾ・ｩ滓桶縺・
+      // WiFi がまだならプールも待機扱い
       poolText = "Waiting";
-      poolCol  = COL_LABEL;           // 繧ｰ繝ｬ繝ｼ
+      poolCol  = COL_LABEL;           // グレー
     } else if (p.poolAlive) {
-      // 繝励・繝ｫ縺九ｉ莉穂ｺ九′譚･縺ｦ縺・ｋ 竊・繝槭う繝九Φ繧ｰ蜿ｯ閭ｽ
+      // プールから仕事が来ている → マイニング可能
       poolText = "OK";
-      poolCol  = 0x07E0;              // 邱・
+      poolCol  = 0x07E0;              // 緑
     } else if (dt_splash < 10000) {
       poolText = makeConnecting("Connecting");
-      poolCol  = 0xFD20;              // 繧ｪ繝ｬ繝ｳ繧ｸ
+      poolCol  = 0xFD20;              // オレンジ
     } else if (dt_splash < 15000) {
       poolText = makeConnecting("Retrying");
-      poolCol  = 0xFD20;              // 繧ｪ繝ｬ繝ｳ繧ｸ
+      poolCol  = 0xFD20;              // オレンジ
     } else {
       poolText = "NG";
-      poolCol  = 0xF800;              // 襍､
+      poolCol  = 0xF800;              // 赤
     }
 
-    // --- 險ｺ譁ｭ繝｡繝・そ繝ｼ繧ｸ・・G縺ｮ縺ｨ縺阪□縺大・縺呻ｼ・---
+    // --- 診断メッセージ（NGのときだけ出す） ---
     String wifiHint;
     if (wifiText == "NG" && p.wifiDiag.length()) {
       wifiHint = p.wifiDiag;
@@ -273,7 +273,7 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText, bool suppre
       poolHint = "";
     }
 
-    // --- 蜀・ｮｹ縺悟､峨ｏ縺｣縺溘→縺阪□縺大・謠冗判・医メ繝ｩ縺､縺埼亟豁｢・・---
+    // --- 内容が変わったときだけ再描画（チラつき防止） ---
     if (wifiText  != splash_wifi_text_  || wifiCol  != splash_wifi_col_  ||
         poolText  != splash_pool_text_  || poolCol  != splash_pool_col_  ||
         wifiHint  != splash_wifi_hint_  || poolHint != splash_pool_hint_) {
@@ -290,9 +290,9 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText, bool suppre
                  splash_wifi_hint_,  splash_pool_hint_);
     }
 
-    // 繧ｹ繝励Λ繝・す繝･邨ゆｺ・擅莉ｶ:
-    // WiFi 謗･邯・・・Pool alive ・・譛菴・遘堤ｵ碁℃ ・・
-    // 縲悟・驛ｨ OK 縺ｫ縺ｪ縺｣縺ｦ縺九ｉ 1 遘貞ｾ・▽縲榊ｴ蜷医□縺鷹・遘ｻ縺吶ｋ
+    // スプラッシュ終了条件:
+    // WiFi 接続 ＋ Pool alive ＋ 最低3秒経過 ＋
+    // 「全部 OK になってから 1 秒待つ」場合だけ遷移する
     bool ok_now = (w == WL_CONNECTED) && p.poolAlive;
 
     if (ok_now) {
@@ -305,33 +305,33 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText, bool suppre
 
     bool ready =
       ok_now &&
-      (now - splash_start_ms_ > 3000) &&      // 繧ｹ繝励Λ繝・す繝･繧呈怙菴・遘偵・隕九○繧・
+      (now - splash_start_ms_ > 3000) &&      // スプラッシュを最低3秒は見せる
       (splash_ready_ms_ != 0) &&
-      (now - splash_ready_ms_ > 1000);        // 蜈ｨOK縺九ｉ1遘偵・菴咎渊
+      (now - splash_ready_ms_ > 1000);        // 全OKから1秒の余韻
 
     if (!ready) {
-      // 笘・OK 莉･螟悶〒縺ｯ邨ｶ蟇ｾ縺ｫ謚懊￠縺ｪ縺・ｼ・G 縺ｮ縺ｨ縺阪・縺薙・縺ｾ縺ｾ・・
+      // ★ OK 以外では絶対に抜けない（NG のときはこのまま）
       return;
     }
 
-    // 縺薙％縺ｾ縺ｧ譚･縺溘ｉ騾壼ｸｸ逕ｻ髱｢縺ｸ
+    // ここまで来たら通常画面へ
     splash_active_ = false;
 
-    // 荳蠎ｦ縺縺鷹壼ｸｸ繝ｬ繧､繧｢繧ｦ繝医・譫繧呈緒縺・※縺翫￥
+    // 一度だけ通常レイアウトの枠を描いておく
     drawStaticFrame();
-    // 縺薙・縺ｾ縺ｾ荳九・騾壼ｸｸ謠冗判繝輔Ο繝ｼ縺ｫ關ｽ縺｡繧・
+    // このまま下の通常描画フローに落ちる
   }
 
 
-  // ===== 縺薙％縺九ｉ騾壼ｸｸ繝繝・す繝･繝懊・繝画緒逕ｻ =====
+  // ===== ここから通常ダッシュボード描画 =====
 
-  // 1) 繧ｿ繝・メ縺ｯ豈弱ヵ繝ｬ繝ｼ繝蜃ｦ逅・ｼ磯俣蠑輔°縺ｪ縺・ｼ・
+  // 1) タッチは毎フレーム処理（間引かない）
   handlePageInput(suppressTouchBeep);
 
-  // 2) 繝・ぅ繝・き繝ｼ繧よｯ弱ヵ繝ｬ繝ｼ繝蝗槭☆・井ｸｭ縺ｮ interval 縺ｧ騾溷ｺｦ隱ｿ謨ｴ・・
+  // 2) ティッカーも毎フレーム回す（中の interval で速度調整）
   drawTicker(tickerText);
 
-  // 3) 蜿ｳ繝代ロ繝ｫ縺ｨ繧｢繝舌ち繝ｼ縺縺鷹俣蠑輔＞縺ｦ謠冗判・郁ｲ闕ｷ霆ｽ貂幢ｼ・
+  // 3) 右パネルとアバターだけ間引いて描画（負荷軽減）
   static uint32_t last = 0;
   if (now - last < 80) {
     return;
@@ -491,17 +491,17 @@ void UIMining::setStackchanSpeechTiming(uint32_t talkMinMs, uint32_t talkVarMs,
 
 
 String UIMining::buildStackchanBubble(const PanelData& p) {
-  int kind = random(0, 6);  // 0縲・
+  int kind = random(0, 6);  // 0〜5
 
   switch (kind) {
-    case 0: { // 繝上ャ繧ｷ繝･繝ｬ繝ｼ繝・
+    case 0: { // // ハッシュレート
       return String("HASH") + vHash(p.hr_kh);
     }
-    case 1: { // 貂ｩ蠎ｦ
+    case 1: { // 温度
       float tc = readTempC();
       return String("TEMP") + vTemp(tc);
     }
-    case 2: { // 繝舌ャ繝・Μ繝ｼ
+    case 2: { // バッテリー
       return String("BATT") + vBatt();
     }
     case 3: { // PING
@@ -515,7 +515,7 @@ String UIMining::buildStackchanBubble(const PanelData& p) {
     }
     case 4: { // POOL
       if (p.poolName.length()) {
-        // vPool 縺ｯ髟ｷ繧√↑縺ｮ縺ｧ縲∫ｴ縺ｮ蜷榊燕繧偵◎縺ｮ縺ｾ縺ｾ蜃ｺ縺・
+        // vPool は長めなので、素の名前をそのまま出す
         return String("POOL ") + p.poolName;
       } else {
         return String("NO POOL");
@@ -536,17 +536,17 @@ String UIMining::buildStackchanBubble(const PanelData& p) {
 // ===== Layout helper =====
 
 UIMining::TextLayoutY UIMining::computeTextLayoutY() const {
-  // 繝倥ャ繝 + 4陦・= 5陦・
+  // ヘッダ + 4行 = 5行
   const int lines = 5;
 
-  // 陦碁俣・医ヰ繝ｩ繝ｳ繧ｹ蜿悶ｊ縺ｮ閧晢ｼ・
-  // 8縲・4縺上ｉ縺・〒螂ｽ縺ｿ隱ｿ謨ｴ縺ｧ縺阪ｋ
+  // 行間（バランス取りの肝）
+  // 8〜14くらいで好み調整できる
   const int gap = 12;
 
   const int block_h = lines * CHAR_H + (lines - 1) * gap;
   int top = (INF_H - block_h) / 2;
 
-  // 遶ｯ縺ｫ蟇・ｊ縺吶℃菫晞匱
+  // 端に寄りすぎ保険
   if (top < 6) top = 6;
 
   TextLayoutY ly;
@@ -556,7 +556,7 @@ UIMining::TextLayoutY UIMining::computeTextLayoutY() const {
   ly.y3 = ly.y2 + CHAR_H + gap;
   ly.y4 = ly.y3 + CHAR_H + gap;
 
-  // 繧､繝ｳ繧ｸ繧ｱ繝ｼ繧ｿ縺ｯ繝倥ャ繝譁・ｭ励・邵ｦ荳ｭ螟ｮ縺ｫ蜷医ｏ縺帙ｋ
+  // インジケータはヘッダ文字の縦中央に合わせる
   ly.ind_y = ly.header + (CHAR_H / 2);
 
   return ly;
@@ -568,14 +568,14 @@ void UIMining::drawSplash(const String& wifiText,  uint16_t wifiCol,
                           const String& wifiHint,  const String& poolHint) {
   auto& d = M5.Display;
 
-  // 逕ｻ髱｢蜈ｨ菴薙・繧ｯ繝ｪ繧｢縺励↑縺・ｼ医メ繝ｩ縺､縺埼亟豁｢縺ｮ縺溘ａ fillScreen 縺ｯ蜻ｼ縺ｰ縺ｪ縺・ｼ・
+  // 画面全体はクリアしない（チラつき防止のため fillScreen は呼ばない）
 
-  // 譫邱壹□縺台ｸ頑嶌縺阪＠縺ｦ縺翫￥
+  // 枠線だけ上書きしておく
   d.drawFastVLine(X_INF, 0, INF_H, 0x18C3);
   d.drawFastHLine(0, Y_LOG - 1, W, 0x18C3);
 
 #ifndef DISABLE_AVATAR
-  // 蟾ｦ蛛ｴ繧｢繝舌ち繝ｼ・医せ繝励Λ繝・す繝･荳ｭ繧りｻｽ縺丞虚縺九☆・・
+  // 左側アバター（スプラッシュ中も軽く動かす）
   PanelData p;
   avatar_.setScale(0.45f);
   avatar_.setPosition(-12, -88);
@@ -588,13 +588,13 @@ void UIMining::drawSplash(const String& wifiText,  uint16_t wifiCol,
   d.clearClipRect();
 #endif
 
-  // 蜿ｳ蛛ｴ・壹ち繧､繝医Ν + WiFi / Pool + 繝舌・繧ｸ繝ｧ繝ｳ + 險ｺ譁ｭ
+  // 右側：タイトル + WiFi / Pool + バージョン + 診断
   info_.fillScreen(BLACK);
   info_.setFont(&fonts::Font0);
 
   int y = 4;
 
-  // 螟ｧ縺阪＞繧ｿ繧､繝医Ν "Mining-Stackchan" 繧・2陦後〒謠冗判
+  // 大きいタイトル "Mining-Stackchan" を 2行で描画
   info_.setTextSize(2);
   info_.setTextColor(WHITE, BLACK);
 
@@ -609,19 +609,19 @@ void UIMining::drawSplash(const String& wifiText,  uint16_t wifiCol,
 
   drawCenter("Mining-");
   drawCenter("Stackchan");
-  y += 6;  // 繧ｿ繧､繝医Ν縺ｨ繧ｹ繝・・繧ｿ繧ｹ鄒､縺ｮ髢薙↓髫咎俣
+  y += 6;  // タイトルとステータス群の間に隙間
 
-  // WiFi / Pool 縺ｮ1繧ｰ繝ｫ繝ｼ繝励ｒ謠上￥
+  // WiFi / Pool の1グループを描く
   auto drawGroup = [&](const char* label, const String& status, uint16_t col,
                        const String& hint) {
-    // 繝ｩ繝吶Ν陦鯉ｼ亥ｰ上＆繧・ｼ・
+    // ラベル行（小さめ）
     info_.setTextSize(1);
     info_.setTextColor(COL_LABEL, BLACK);
     info_.setCursor(PAD_LR, y);
     info_.print(label);
     y += 12;
 
-    // 繧ｹ繝・・繧ｿ繧ｹ陦鯉ｼ亥､ｧ縺阪ａ繝ｻ蜿ｳ蟇・○・・
+    // ステータス行（大きめ・右寄せ）
     info_.setTextSize(2);
     info_.setTextColor(col, BLACK);
     int tw = info_.textWidth(status);
@@ -631,25 +631,25 @@ void UIMining::drawSplash(const String& wifiText,  uint16_t wifiCol,
     info_.print(status);
     y += 22;
 
-    // 險ｺ譁ｭ繝｡繝・そ繝ｼ繧ｸ・亥ｰ上＆繧√・蟾ｦ蟇・○・乗怙螟ｧ2陦鯉ｼ・
+    // 診断メッセージ（小さめ・左寄せ／最大2行）
     if (hint.length()) {
       info_.setTextSize(1);
       info_.setTextColor(COL_LABEL, BLACK);
 
       int max_w = INF_W - PAD_LR * 2;
 
-      // 蜊倩ｪ槭＃縺ｨ縺ｫ陦後ｒ隧ｰ繧√※縺・￥邁｡譏薙Ρ繝ｼ繝峨Λ繝・・・郁恭隱槫燕謠撰ｼ・
+      // 単語ごとに行を詰めていく簡易ワードラップ（英語前提）
       auto fillLine = [&](String& src, String& dest) {
         dest = "";
         while (src.length()) {
           int spacePos = src.indexOf(' ');
           String word;
           if (spacePos == -1) {
-            // 譛蠕後・蜊倩ｪ・
+            // 最後の単語
             word = src;
             src  = "";
           } else {
-            // 蜈磯ｭ縺ｮ蜊倩ｪ・+ 繧ｹ繝壹・繧ｹ縺ｾ縺ｧ
+            // 先頭の単語 + スペースまで
             word = src.substring(0, spacePos + 1);
             src.remove(0, spacePos + 1);
           }
@@ -657,10 +657,10 @@ void UIMining::drawSplash(const String& wifiText,  uint16_t wifiCol,
           String candidate = dest + word;
           if (info_.textWidth(candidate) > max_w) {
             if (dest.length() == 0) {
-              // 1蜊倩ｪ槭□縺代〒繧ｪ繝ｼ繝舌・縺吶ｋ蝣ｴ蜷医・縺昴・縺ｾ縺ｾ蛻・ｋ
+              // 1単語だけでオーバーする場合はそのまま切る
               dest = candidate;
             } else {
-              // 蜈･繧翫″繧峨↑縺九▲縺溷腰隱槭・谺｡縺ｮ陦後↓蝗槭☆
+              // 入りきらなかった単語は次の行に回す
               src = word + src;
             }
             break;
@@ -673,38 +673,38 @@ void UIMining::drawSplash(const String& wifiText,  uint16_t wifiCol,
       String remaining = hint;
       String line1, line2;
 
-      // 1陦檎岼繧剃ｽ懊ｋ
+      // 1行目を作る
       fillLine(remaining, line1);
-      // 縺ｾ縺譁・ｭ励′谿九▲縺ｦ縺・ｌ縺ｰ2陦檎岼繧剃ｽ懊ｋ
+      // まだ文字が残っていれば2行目を作る
       if (remaining.length()) {
         fillLine(remaining, line2);
       }
 
-      // 1陦檎岼
+      // 1行目
       if (line1.length()) {
         info_.setCursor(PAD_LR, y);
         info_.print(line1);
         y += 12;
       }
 
-      // 2陦檎岼・医≠繧後・・・
+      // 2行目（あれば）
       if (line2.length()) {
         info_.setCursor(PAD_LR, y);
         info_.print(line2);
         y += 12;
       }
 
-      y += 2;  // 繧ｰ繝ｫ繝ｼ繝励→縺ｮ髫咎俣繧偵■繧・▲縺ｨ縺縺題ｿｽ蜉
+      y += 2;  // グループとの隙間をちょっとだけ追加
     }
 
 
-    y += 4;  // 繧ｰ繝ｫ繝ｼ繝鈴俣縺ｮ菴咏區
+    y += 4;  // グループ間の余白
   };
 
   drawGroup("WiFi", wifiText, wifiCol, wifiHint);
   drawGroup("Pool", poolText, poolCol, poolHint);
 
-  // 蜿ｳ荳九↓繝舌・繧ｸ繝ｧ繝ｳ陦ｨ險假ｼ井ｾ・ v0.34・・
+  // 右下にバージョン表記（例: v0.34）
   info_.setTextSize(1);
   info_.setTextColor(COL_LABEL, BLACK);
 
@@ -723,16 +723,16 @@ void UIMining::drawSplash(const String& wifiText,  uint16_t wifiCol,
 
 
 void UIMining::drawSleepMessage() {
-  // 蜿ｳ蛛ｴ縺ｮ繝代ロ繝ｫ・・ユ繧｣繝・き繝ｼ縺縺代Γ繝・そ繝ｼ繧ｸ縺ｫ蟾ｮ縺玲崛縺医ｋ
+  // 右側のパネル＆ティッカーだけメッセージに差し替える
   info_.fillScreen(BLACK);
   tick_.fillScreen(BLACK);
 
-  int y = 70;  // 縺縺・◆縺・ｸｭ螟ｮ縺ゅ◆繧翫°繧峨せ繧ｿ繝ｼ繝・
+  int y = 70;  // だいたい中央あたりからスタート
 
   info_.setFont(&fonts::Font0);
   info_.setTextColor(WHITE, BLACK);
 
-  // 1陦檎岼: "Zzz..."・医■繧・▲縺ｨ螟ｧ縺阪ａ・・
+  // 1行目: "Zzz..."（ちょっと大きめ）
   info_.setTextSize(2);
   auto drawCenter = [&](const String& s, int lineHeight) {
     int tw = info_.textWidth(s);
@@ -745,11 +745,11 @@ void UIMining::drawSleepMessage() {
 
   drawCenter("Zzz...", 18);
 
-  // 2陦檎岼: 譌･譛ｬ隱槭Γ繝・そ繝ｼ繧ｸ・域勸騾壹し繧､繧ｺ・・
+  // 2行目: メッセージ（普通サイズ）
   info_.setTextSize(1);
   drawCenter("Screen off, mining on", 14);
 
-  // 螳溽判髱｢縺ｫ蜿肴丐
+  // 実画面に反映
   info_.pushSprite(X_INF, 0);
   tick_.pushSprite(0, Y_LOG);
 }
@@ -762,19 +762,13 @@ void UIMining::drawSleepMessage() {
 void UIMining::drawStaticFrame() {
   auto& d = M5.Display;
 
-  // 笘・ヵ繝ｫ繝ｪ繝輔Ξ繝・す繝･繧偵ｄ繧√ｋ
+  // 画面全体はクリアしない（チラつき防止のため fillScreen は呼ばない）
   // d.fillScreen(BLACK);
 
-  // 譫邱壹□縺第緒逕ｻ・医％繧後↑繧峨メ繝ｩ縺､縺九↑縺・ｼ・
+  // 枠線だけ上書きしておく
   d.drawFastVLine(X_INF, 0, INF_H, 0x18C3);
   d.drawFastHLine(0, Y_LOG - 1, W, 0x18C3);
 
-  // 蟾ｦ荳翫ユ繧ｭ繧ｹ繝医ｂ謠上°縺ｪ縺・
-  // d.setFont(&fonts::Font0);
-  // d.setTextSize(1);
-  // d.setTextColor(WHITE, BLACK);
-  // d.setCursor(4, 4);
-  // d.printf("%s %s", app_name_.c_str(), app_ver_.c_str());
 }
 
 

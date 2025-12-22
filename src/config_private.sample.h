@@ -9,7 +9,7 @@
 
 //Duino-coin
 #define MC_DUCO_USER      "your-duco-user"
-#define MC_DUCO_MINER_KEY "None"  // ない場合
+#define MC_DUCO_MINER_KEY "None"  // ある場合
 
 // 無操作スリープまでの時間（秒）
 // 画面だけOFFにして、マイニングは継続します

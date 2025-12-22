@@ -2,3 +2,8 @@
 *.mp4 binary
 *.jpg binary
 *.png binary
+
+*.h text eol=lf
+*.cpp text eol=lf
+*.ino text eol=lf
+*.json text eol=lf
