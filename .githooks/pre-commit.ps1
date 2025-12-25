@@ -1,34 +1,47 @@
 $ErrorActionPreference = "Stop"
+# Ensure we run at repo root (hooks may run from another cwd)
+Set-Location (git rev-parse --show-toplevel)
 
-# staged対象（追加/変更/リネーム）だけ
-$files = git diff --cached --name-only --diff-filter=ACMR |
+$files = @(git diff --cached --name-only) |
+  Where-Object { $_ -and $_.Trim().Length -gt 0 } |
   ForEach-Object { $_.Trim() } |
   Where-Object { $_ -match '\.(h|hpp|c|cpp|ino|md|txt|json|ini|ps1)$' }
 
+Write-Host "[DBG] files.Count=$($files.Count)" -ForegroundColor Cyan
+if ($files.Count -eq 0) { exit 0 }
+
 $bad = @()
+$utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
+$replacement = [string][char]0xFFFD
 
 foreach ($f in $files) {
-  if (!(Test-Path $f)) { continue }
+  $tmpOut = Join-Path $env:TEMP ("gitshow_" + [Guid]::NewGuid().ToString("N") + ".bin")
+  $tmpErr = Join-Path $env:TEMP ("gitshow_" + [Guid]::NewGuid().ToString("N") + ".err")
 
-  $bytes = [System.IO.File]::ReadAllBytes($f)
+  $args = @("show", ":$f")
+  $p = Start-Process -FilePath "git" -ArgumentList $args -NoNewWindow -PassThru -Wait -RedirectStandardOutput $tmpOut -RedirectStandardError $tmpErr
 
-  # UTF-8として不正なバイト列が混ざってたら例外になる
-  $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
+  if ($p.ExitCode -ne 0) {
+    Remove-Item -Force $tmpOut,$tmpErr -ErrorAction SilentlyContinue
+    continue
+  }
+
+  $bytes = [System.IO.File]::ReadAllBytes($tmpOut)
+  Remove-Item -Force $tmpOut,$tmpErr -ErrorAction SilentlyContinue
+
   try {
-    $text = $utf8.GetString($bytes)
+    $text = $utf8Strict.GetString($bytes)
   } catch {
-    $bad += "$f (invalid UTF-8 sequence)"
+    $bad += "$f (invalid UTF-8 bytes in staged content)"
     continue
   }
 
-  # ガード1: 置換文字( )が含まれたら弾く（文字化けの典型）
-  if ($text.Contains([char]0xFFFD)) {
-    $bad += "$f (contains replacement character U+FFFD ' ' - possible mojibake)"
+  if ($text.Contains($replacement)) {
+    $bad += "$f (contains U+FFFD replacement character)"
     continue
   }
 
-  # ガード2: ファイル末尾が改行で終わってないのは拒否
-  if (-not $text.EndsWith("`n")) {
+  if (-not ($bytes.Length -gt 0 -and $bytes[$bytes.Length - 1] -eq 0x0A)) {
     $bad += "$f (missing final newline)"
     continue
   }
@@ -39,7 +52,7 @@ if ($bad.Count -gt 0) {
   Write-Host "ERROR: Encoding / newline guard failed for staged changes:" -ForegroundColor Red
   $bad | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
   Write-Host ""
-  Write-Host "Fix: reopen with correct encoding, save as UTF-8 (no BOM), ensure final newline, then re-stage." -ForegroundColor Yellow
+  Write-Host "Fix: remove mojibake chars, save as UTF-8 (no BOM), ensure final newline, then re-stage." -ForegroundColor Yellow
   exit 1
 }
 
