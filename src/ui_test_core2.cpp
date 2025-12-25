@@ -95,3 +95,12 @@ void UITestCore2::draw(uint32_t nowMs, const TestState& st) {
   d.setCursor(190, 205);
   d.print("BATCH");
 }
+
+
+
+// src/main.cpp
+// ===== Mining-chan Core2 — main entry (UI + orchestrator) =====
+// Board   : M5Stack Core2
+// Libs    : M5Unified, ArduinoJson, WiFi, WiFiClientSecure, HTTPClient, m5stack-avatar
+// Notes   : マイニング処理は mining_task.* に分離。
+//           画面描画は ui_mining_core2.h に集約。
