@@ -8,3 +8,9 @@ test/
 .pio/
 .vscode/
 *.log
+
+# build artifacts
+dist/
+
+# local helper scripts (not for repo)
+tools/

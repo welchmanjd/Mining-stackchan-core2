@@ -7,7 +7,6 @@ $files = @(git diff --cached --name-only) |
   ForEach-Object { $_.Trim() } |
   Where-Object { $_ -match '\.(h|hpp|c|cpp|ino|md|txt|json|ini|ps1)$' }
 
-Write-Host "[DBG] files.Count=$($files.Count)" -ForegroundColor Cyan
 if ($files.Count -eq 0) { exit 0 }
 
 $bad = @()

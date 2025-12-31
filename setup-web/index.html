@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="ja">
+<head>
+
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mining Stackchan Setup</title>
+
+    <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+
+    <style>
+    body { font-family: system-ui, sans-serif; }
+    #status { padding: 8px; border: 1px solid #ccc; margin: 8px 0; }
+    button { margin-right: 8px; }
+    </style>
+</head>
+
+<body>
+<h1>Mining Stackchan Setup</h1>
+
+<section style="padding:12px; border:1px solid #ddd; border-radius:8px; margin-bottom:16px;">
+  <h2>① インストール（M5Stack Core2）</h2>
+  <p>Chrome / Edge でUSB接続して「INSTALL」を押してね。</p>
+  <esp-web-install-button manifest="manifest.json"></esp-web-install-button>
+  <p style="margin-top:8px; font-size: 0.9em;">
+    うまくいかない時：USBケーブルが「充電専用」だと失敗することがあるよ。
+  </p>
+  <p style="margin-top:8px; font-size:0.9em; color:#666;">
+  INSTALL後はM5StackCore2本体が再起動します。数秒待ってから②のConnectを押してね（同時に接続すると失敗しやすい）。
+  </p>
+</section>
+
+<h2 style="margin-top:8px;">② 接続して設定</h2>
+<div id="status">Status: <b id="statusText">Disconnected</b></div>
+
+<button id="btnConnect">Connect</button>
+<button id="btnDisconnect" disabled>Disconnect</button>
+
+<div style="margin:8px 0;">
+  <input id="cmdInput" type="text" value="HELLO" style="width:260px;" />
+  <button id="btnSend" disabled>Send</button>
+  <span style="margin-left:8px; color:#666;">(Enterでも送信)</span>
+</div>
+
+<div style="margin:8px 0; display:flex; gap:8px; align-items:center;">
+  <button id="btnGetInfo" disabled>Get Info</button>
+  <span id="infoText" style="color:#333;"></span>
+</div>
+
+<div style="margin:8px 0; display:flex; gap:8px; align-items:center;">
+  <button id="btnGetCfg" disabled>Get Config</button>
+  <button id="btnApplyCfg" disabled>Apply</button>
+  <button id="btnSaveCfg" disabled>Save</button>
+  <button id="btnReboot" disabled>Reboot</button>
+  <span id="cfgStatus" style="color:#333;"></span>
+</div>
+
+
+<pre id="cfgJson" style="margin:8px 0; white-space:pre-wrap; background:#f6f6f6; padding:8px; border:1px solid #ddd;"></pre>
+
+<div style="margin:8px 0; border:1px solid #ddd; padding:10px; background:#fafafa;">
+  <div style="display:flex; gap:12px; align-items:center; margin-bottom:8px;">
+    <b>Config (editable)</b>
+    <label style="margin-left:auto; color:#666;">
+      <input type="checkbox" id="chkShowSecrets" />
+      Show secrets
+    </label>
+  </div>
+
+  <fieldset style="border:1px solid #ddd; padding:8px; margin:8px 0;">
+    <legend>Wi-Fi</legend>
+    <div style="display:flex; gap:8px; align-items:center; margin:6px 0;">
+      <label style="width:120px;">SSID</label>
+      <input id="wifiSsid" type="text" style="flex:1;" />
+    </div>
+    <div style="display:flex; gap:8px; align-items:center; margin:6px 0;">
+      <label style="width:120px;">Password</label>
+      <input id="wifiPass" type="password" style="flex:1;" placeholder="(leave blank to keep current)" />
+      <span id="wifiPassHint" style="color:#666; font-size:12px;"></span>
+    </div>
+  </fieldset>
+
+  <fieldset style="border:1px solid #ddd; padding:8px; margin:8px 0;">
+    <legend>Duino-Coin</legend>
+    <div style="display:flex; gap:8px; align-items:center; margin:6px 0;">
+      <label style="width:120px;">User</label>
+      <input id="ducoUser" type="text" style="flex:1;" />
+    </div>
+    <div style="display:flex; gap:8px; align-items:center; margin:6px 0;">
+      <label style="width:120px;">Key</label>
+      <input id="ducoKey" type="password" style="flex:1;" placeholder="(leave blank to keep current)" />
+      <span id="ducoKeyHint" style="color:#666; font-size:12px;"></span>
+    </div>
+  </fieldset>
+
+  <fieldset style="border:1px solid #ddd; padding:8px; margin:8px 0;">
+    <legend>Azure TTS</legend>
+    <div style="display:flex; gap:8px; align-items:center; margin:6px 0;">
+      <label style="width:120px;">Region</label>
+      <input id="azRegion" type="text" style="flex:1;" />
+    </div>
+    <div style="display:flex; gap:8px; align-items:center; margin:6px 0;">
+      <label style="width:120px;">Voice</label>
+      <input id="azVoice" type="text" style="flex:1;" />
+    </div>
+    <div style="display:flex; gap:8px; align-items:center; margin:6px 0;">
+      <label style="width:120px;">Key</label>
+      <input id="azKey" type="password" style="flex:1;" placeholder="(leave blank to keep current)" />
+      <span id="azKeyHint" style="color:#666; font-size:12px;"></span>
+    </div>
+  </fieldset>
+
+  <div style="color:#666; font-size:12px;">
+    ※ Password/Key を空のまま Apply すると、機体側の既存値は維持されます（ログにも表示しません）
+  </div>
+</div>
+
+<div style="margin:8px 0;">
+  Device info: <span id="devInfo">-</span>
+</div>
+
+<div style="display:flex; gap:12px; align-items:flex-start;">
+  <div style="flex:1;">
+    <div style="margin:8px 0; display:flex; gap:8px; align-items:center;">
+      <b>Setup log</b>
+      <button id="btnClearSetup" disabled>Clear</button>
+    </div>
+    <pre id="setupLog" style="height:28vh; overflow:auto; background:#111; color:#0f0; padding:8px;"></pre>
+  </div>
+
+  <div style="flex:1;">
+    <div style="margin:8px 0; display:flex; gap:8px; align-items:center;">
+      <b>Raw log</b>
+      <button id="btnClearRaw" disabled>Clear</button>
+      <label style="margin-left:auto; color:#666;">
+        <input type="checkbox" id="chkShowRaw" />
+        Show raw
+      </label>
+    </div>
+    <pre id="rawLog" style="height:28vh; overflow:auto; background:#111; color:#0f0; padding:8px;"></pre>
+  </div>
+</div>
+
+
+<script type="module">
+  const $ = (id) => document.getElementById(id);
+
+  const append = (preId, s) => {
+    const el = $(preId);
+    if (!el) return;
+    el.textContent += s + "\n";
+    el.scrollTop = el.scrollHeight;
+  };
+
+  const logRaw = (s) => {
+    if ($("chkShowRaw")?.checked) append("rawLog", s);
+  };
+
+  const logSetup = (s) => append("setupLog", s);
+
+  // 互換：既存の log() は raw に流す
+  const log = (s) => logRaw(s);
+
+  let port = null;
+  let reader = null;
+  let writer = null;
+
+  // 最後に GET CFG で受け取った設定（差分Apply用）
+  let lastCfg = null;
+
+  // 今回のApplyで「送った」項目だけSaved表示にするためのdirtyフラグ
+  const dirty = {
+    wifi_pass: false,
+    duco_key: false,
+    az_key: false,
+  };
+  
+  function setUi(connected) {
+    $("statusText").textContent = connected ? "Connected" : "Disconnected";
+    $("btnConnect").disabled = connected;
+    $("btnDisconnect").disabled = !connected;
+
+    $("btnSend").disabled = !connected;
+    $("cmdInput").disabled = !connected;
+
+    $("btnClearSetup").disabled = !connected;
+    $("btnClearRaw").disabled = !connected;
+
+    $("btnGetInfo").disabled = !connected;
+    $("btnGetCfg").disabled = !connected;
+    $("btnApplyCfg").disabled = !connected;
+    $("btnSaveCfg").disabled = !connected;
+    $("btnReboot").disabled = !connected;
+  }
+
+  function fmtHex(n) {
+    if (typeof n !== "number") return "?";
+    return "0x" + n.toString(16).toUpperCase().padStart(4, "0");
+  }
+
+  function showPortInfo(p) {
+    try {
+      const info = p.getInfo?.();
+      if (info && (info.usbVendorId || info.usbProductId)) {
+        $("devInfo").textContent = `USB VID=${fmtHex(info.usbVendorId)} PID=${fmtHex(info.usbProductId)}`;
+      } else {
+        $("devInfo").textContent = "USB device (details unavailable)";
+      }
+    } catch {
+      $("devInfo").textContent = "USB device (details unavailable)";
+    }
+  }
+
+  async function readLoop() {
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    while (port && port.readable) {
+      reader = port.readable.getReader();
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buf += decoder.decode(value, { stream: true });
+
+          // 行単位で表示（\n区切り）
+          let idx;
+          while ((idx = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, idx).replace(/\r$/, "");
+            buf = buf.slice(idx + 1);
+            if (!line) continue;
+
+            // @で始まる行は「セットアップ応答」として分離して見せる
+            if (line.startsWith("@")) logSetup("<< " + line);
+            logRaw("<< " + line);
+
+            // @INFO {json...}
+            if (line.startsWith("@INFO ")) {
+              const jsonText = line.slice("@INFO ".length).trim();
+              try {
+                const obj = JSON.parse(jsonText);
+                $("infoText").textContent = `app=${obj.app ?? "?"}  ver=${obj.ver ?? "?"}`;
+              } catch {
+                $("infoText").textContent = jsonText;
+              }
+            }
+
+            // @CFG {json...}
+            if (line.startsWith("@CFG ")) {
+              const jsonText = line.slice("@CFG ".length).trim();
+              $("cfgJson").textContent = jsonText;
+
+              try {
+                const cfg = JSON.parse(jsonText);
+                lastCfg = cfg; // ★差分Applyの基準として保存
+
+                $("wifiSsid").value = cfg.wifi_ssid ?? "";
+                $("ducoUser").value = cfg.duco_user ?? "";
+                $("azRegion").value = cfg.az_region ?? "";
+                $("azVoice").value  = cfg.az_voice ?? "";
+
+                // secrets は内容は表示しない（set済みかだけ）
+                $("wifiPass").value = "";
+                $("ducoKey").value  = "";
+                $("azKey").value    = "";
+
+                $("wifiPassHint").textContent = cfg.wifi_pass_set ? "(set)" : "(not set)";
+                $("ducoKeyHint").textContent  = cfg.duco_key_set ? "(set)" : "(not set)";
+                $("azKeyHint").textContent    = cfg.az_key_set ? "(set)" : "(not set)";
+
+                $("cfgStatus").textContent = "Config loaded.";
+              } catch {
+                $("cfgStatus").textContent = "Config loaded (raw).";
+              }
+            }
+
+
+            // 成功/失敗をステータス表示
+            if (line.startsWith("@OK ")) {
+            const msg = line.slice("@OK ".length).trim();
+            $("cfgStatus").textContent = msg;
+
+            if (msg === "SAVE") {
+              // ★今回のApplyで送ったものだけ Saved ✓ にする
+              const markSaved = (hintId) => {
+                const el = $(hintId);
+                if (!el) return;
+                el.textContent = "Saved ✓";
+                el.style.fontWeight = "700";
+                el.style.color = "#06c";
+                setTimeout(() => {
+                  el.style.fontWeight = "";
+                  el.style.color = "#666";
+                }, 4000);
+              };
+
+              if (dirty.wifi_pass) markSaved("wifiPassHint");
+              if (dirty.duco_key)  markSaved("ducoKeyHint");
+              if (dirty.az_key)    markSaved("azKeyHint");
+
+              // dirtyをクリア（次のApplyまでSavedは出ない）
+              dirty.wifi_pass = false;
+              dirty.duco_key  = false;
+              dirty.az_key    = false;
+            }
+
+            }
+
+            if (line.startsWith("@ERR ")) {
+              $("cfgStatus").textContent = "ERROR: " + line.slice("@ERR ".length).trim();
+            }
+          }
+        }
+      } catch (e) {
+        log("Read stopped: " + e);
+      } finally {
+        try { reader.releaseLock(); } catch {}
+        reader = null;
+      }
+    }
+  }
+
+  async function writeLine(cmd, logText = cmd) {
+    if (!writer) return;
+
+    // 左：セットアップ会話（秘密は logText 側で伏せる）
+    logSetup(">> " + logText);
+
+    // 右：Raw（表示ONなら。Rawにも秘密を出さない）
+    logRaw(">> " + logText);
+
+    const data = new TextEncoder().encode(cmd + "\n");
+    await writer.write(data);
+  }
+
+
+  async function disconnectInternal(reason = "") {
+    if (reason) log(reason);
+
+    // 読み取り停止
+    try { await reader?.cancel(); } catch {}
+    reader = null;
+
+    // 書き込み解放
+    try { writer?.releaseLock(); } catch {}
+    writer = null;
+
+    // ポートクローズ
+    try { await port?.close(); } catch {}
+    port = null;
+
+    setUi(false);
+    $("devInfo").textContent = "-";
+  }
+
+  // --- buttons ---
+  $("btnConnect").onclick = async () => {
+    if (!("serial" in navigator)) {
+      logSetup("WebSerial not supported in this browser.");
+      return;
+    }
+
+    try {
+      logSetup("Requesting port...");
+      port = await navigator.serial.requestPort();
+      logSetup("Port selected: OK");
+
+      await port.open({ baudRate: 115200 });
+      logSetup("Port opened: OK");
+
+      showPortInfo(port);
+
+      writer = port.writable.getWriter();
+
+      setUi(true);
+      readLoop(); // awaitしない
+    } catch (e) {
+      if (e?.name === "NotFoundError") {
+        logSetup("Canceled by user.");
+        return;
+      }
+      logSetup("Error: " + e);
+      await disconnectInternal();
+    }
+  };
+
+  $("btnDisconnect").onclick = async () => {
+    await disconnectInternal("Disconnected.");
+  };
+
+  $("btnSend").onclick = async () => {
+    const s = $("cmdInput").value ?? "";
+    if (!s.trim()) return;
+    try {
+      await writeLine(s.trim());
+    } catch (e) {
+      logSetup("Send error: " + e);
+    }
+  };
+
+  $("btnGetInfo").onclick = async () => {
+    try {
+      await writeLine("GET INFO");
+    } catch (e) {
+      logSetup("!! GET INFO failed: " + e);
+    }
+  };
+
+  $("btnGetCfg").onclick = async () => {
+    try {
+      $("cfgStatus").textContent = "";
+      await writeLine("GET CFG");
+    } catch (e) {
+      logSetup("!! GET CFG failed: " + e);
+    }
+  };
+
+  $("btnSaveCfg").onclick = async () => {
+    try {
+      $("cfgStatus").textContent = "Saving...";
+      await writeLine("SAVE");
+    } catch (e) {
+      logSetup("!! SAVE failed: " + e);
+    }
+  };
+
+  $("btnReboot").onclick = async () => {
+    try {
+      $("cfgStatus").textContent = "Rebooting...";
+      await writeLine("REBOOT");
+    } catch (e) {
+      logSetup("!! REBOOT failed: " + e);
+    }
+  };
+
+  $("btnApplyCfg").onclick = async () => {
+    try {
+      if (!lastCfg) {
+        $("cfgStatus").textContent = "Please 'Get Config' first.";
+        return;
+      }
+
+      $("cfgStatus").textContent = "Applying...";
+
+      // 入力値（公開系はtrim、秘密はそのまま）
+      const ssid     = ($("wifiSsid").value ?? "").trim();
+      const pass     = ($("wifiPass").value ?? "");      // 空なら送らない
+      const ducoUser = ($("ducoUser").value ?? "").trim();
+      const ducoKey  = ($("ducoKey").value ?? "");       // 空なら送らない
+      const azRegion = ($("azRegion").value ?? "").trim();
+      const azVoice  = ($("azVoice").value ?? "").trim();
+      const azKey    = ($("azKey").value ?? "");         // 空なら送らない
+
+      // 行プロトコル安全：改行は禁止
+      const hasNL = (s) => /[\r\n]/.test(s);
+      if ([ssid, pass, ducoUser, ducoKey, azRegion, azVoice, azKey].some(hasNL)) {
+        $("cfgStatus").textContent = "ERROR: Newline is not allowed in values.";
+        return;
+      }
+
+      // 比較（null/undefined対策＋文字列化）
+      const same = (a, b) => String(a ?? "") === String(b ?? "");
+
+      let sent = 0;
+
+      // 公開項目：変更があったものだけ送る
+      if (!same(ssid, lastCfg.wifi_ssid)) {
+        await writeLine(`SET wifi_ssid ${ssid}`);
+        lastCfg.wifi_ssid = ssid;
+        sent++;
+      }
+      if (!same(ducoUser, lastCfg.duco_user)) {
+        await writeLine(`SET duco_user ${ducoUser}`);
+        lastCfg.duco_user = ducoUser;
+        sent++;
+      }
+      if (!same(azRegion, lastCfg.az_region)) {
+        await writeLine(`SET az_region ${azRegion}`);
+        lastCfg.az_region = azRegion;
+        sent++;
+      }
+      if (!same(azVoice, lastCfg.az_voice)) {
+        await writeLine(`SET az_voice ${azVoice}`);
+        lastCfg.az_voice = azVoice;
+        sent++;
+      }
+
+      // secrets：入力があるときだけ送る（比較はしない、ログは伏せる）
+    const flashHint = (id, text, revertText = "(set)", ms = 4000) => {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = text;
+    // ちょい強調（任意）
+    el.style.fontWeight = "700";
+    el.style.color = "#0a0";
+    setTimeout(() => {
+        el.textContent = revertText;
+        el.style.fontWeight = "";
+        el.style.color = "#666";
+    }, ms);
+    };
+
+    if (pass) {
+    await writeLine(`SET wifi_pass ${pass}`, "SET wifi_pass ********");
+    lastCfg.wifi_pass_set = true;
+
+    // 安全のため値は消す（ログにも残さない）
+    $("wifiPass").value = "";
+
+    // でもユーザーには「適用された」を明示
+    flashHint("wifiPassHint", "Applied ✓ (not saved yet)", "(set)");
+    dirty.wifi_pass = true;
+    sent++;
+    }
+
+    if (ducoKey) {
+    await writeLine(`SET duco_key ${ducoKey}`, "SET duco_key ********");
+    lastCfg.duco_key_set = true;
+    $("ducoKey").value = "";
+    flashHint("ducoKeyHint", "Applied ✓ (not saved yet)", "(set)");
+    dirty.duco_key = true;
+    sent++;
+    }
+
+    if (azKey) {
+    await writeLine(`SET az_key ${azKey}`, "SET az_key ********");
+    lastCfg.az_key_set = true;
+    $("azKey").value = "";
+    flashHint("azKeyHint", "Applied ✓ (not saved yet)", "(set)");
+    dirty.az_key = true;
+    sent++;
+    }
+
+      if (sent === 0) {
+        $("cfgStatus").textContent = "No changes.";
+        return;
+      }
+
+      $("cfgStatus").textContent = `Applied (${sent} change${sent === 1 ? "" : "s"}). (Not saved yet)`;
+    } catch (e) {
+      $("cfgStatus").textContent = "ERROR: Apply failed";
+      logSetup("!! Apply failed: " + e);
+    }
+  };
+
+
+
+  $("cmdInput").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      $("btnSend").click();
+    }
+  });
+
+  $("btnClearSetup").onclick = () => { $("setupLog").textContent = ""; };
+  $("btnClearRaw").onclick = () => { $("rawLog").textContent = ""; };
+
+  // USB抜けなど（環境によっては発火しない場合もある）
+  navigator.serial?.addEventListener?.("disconnect", async () => {
+    await disconnectInternal("Device disconnected.");
+  });
+
+  $("chkShowSecrets").addEventListener("change", () => {
+    const show = $("chkShowSecrets").checked;
+    const t = show ? "text" : "password";
+    $("wifiPass").type = t;
+    $("ducoKey").type  = t;
+    $("azKey").type    = t;
+  });
+
+
+  // init
+  setUi(false);
+  $("cmdInput").disabled = true;
+  logSetup("Open this page on HTTPS (GitHub Pages) or on localhost for testing.");
+</script>
+</body>
+</html>

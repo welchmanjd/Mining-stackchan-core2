@@ -1,0 +1,13 @@
+{
+  "name": "Mining Stackchan (M5Stack Core2)",
+  "version": "0.61",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        { "path": "firmware/mining-stackchan_core2_v0.61_dist_merged.bin", "offset": 0 }
+      ]
+    }
+  ]
+}

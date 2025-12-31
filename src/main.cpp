@@ -11,12 +11,16 @@
 #include <time.h>
 #include <stdarg.h>
 #include <esp32-hal-cpu.h>
+#include <ArduinoJson.h>
+
 
 #include "ui_mining_core2.h"
 #include "app_presenter.h"
 #include "config.h"
 #include "mining_task.h"
 #include "logging.h"   // ← 他の #include と一緒に、ファイル先頭の方へ移動推奨
+#include "mc_config_store.h"
+
 #include "azure_tts.h"
 #include "stackchan_behavior.h"
 #include "orchestrator.h"
@@ -51,6 +55,166 @@ static bool     g_attentionActive = false;
 static uint32_t g_attentionUntilMs = 0;
 static MiningYieldProfile g_savedYield = MiningYieldNormal();
 static bool     g_savedYieldValid = false;
+
+
+// ===== Web setup serial commands (simple line protocol) =====
+// Web側から 1行コマンドを送り、本体が @ で始まる1行レスポンスを返す。
+// 例: "HELLO\n" -> "@OK HELLO"
+
+static char   g_setupLine[512];
+static size_t g_setupLineLen = 0;
+
+// Read display_sleep_s from mc_config_store JSON (@CFG相当) with fallback
+static long getDisplaySleepSecondsFromStore_(long fallbackSec) {
+  String j = mcConfigGetMaskedJson(); // contains display_sleep_s, attention_text, etc.
+  StaticJsonDocument<1024> doc;
+  DeserializationError e = deserializeJson(doc, j);
+  if (e) return fallbackSec;
+
+  JsonVariant v = doc["display_sleep_s"];
+  if (v.is<long>()) {
+    long sec = v.as<long>();
+    if (sec > 0) return sec;
+  } else if (v.is<int>()) {
+    long sec = (long)v.as<int>();
+    if (sec > 0) return sec;
+  }
+  return fallbackSec;
+}
+
+// display sleep timeout [ms] (runtime configurable via SET display_sleep_s)
+static uint32_t g_displaySleepTimeoutMs = (uint32_t)MC_DISPLAY_SLEEP_SECONDS * 1000UL;
+
+static void handleSetupLine(const char* line) {
+  // 空行は無視
+  if (!line || !*line) return;
+
+  // コマンドは大文字小文字ゆるく（必要なら厳格にしてOK）
+  String cmd(line);
+  cmd.trim();
+
+  // まずは最小セット
+  if (cmd.equalsIgnoreCase("HELLO")) {
+    Serial.println("@OK HELLO");
+    return;
+  }
+  if (cmd.equalsIgnoreCase("PING")) {
+    Serial.println("@OK PONG");
+    return;
+  }
+  if (cmd.equalsIgnoreCase("HELP")) {
+    Serial.println("@OK CMDS=HELLO,PING,GET INFO,HELP");
+    return;
+  }
+  if (cmd.equalsIgnoreCase("GET INFO")) {
+    const auto& cfg = appConfig();
+    char buf[200];
+    snprintf(buf, sizeof(buf),
+             "@INFO {\"app\":\"%s\",\"ver\":\"%s\",\"baud\":%d}",
+             cfg.app_name, cfg.app_version, 115200);
+    Serial.println(buf);
+    return;
+  }
+
+    if (cmd.equalsIgnoreCase("GET CFG")) {
+    String j = mcConfigGetMaskedJson();
+    Serial.print("@CFG ");
+    Serial.println(j);
+    return;
+  }
+
+  if (cmd.startsWith("SET ")) {
+    // SET <KEY> <VALUE>
+    String rest = cmd.substring(4);
+    int sp = rest.indexOf(' ');
+    if (sp < 0) {
+      Serial.println("@ERR bad_set_format");
+      return;
+    }
+    String key = rest.substring(0, sp);
+    String val = rest.substring(sp + 1);
+    key.trim(); val.trim();
+
+    String err;
+    if (mcConfigSetKV(key, val, err)) {
+
+      // ---- apply runtime effects immediately (optional but nice) ----
+      if (key.equalsIgnoreCase("display_sleep_s")) {
+        long sec = val.toInt();
+        if (sec > 0) {
+          g_displaySleepTimeoutMs = (uint32_t)sec * 1000UL;
+        } else {
+          g_displaySleepTimeoutMs = (uint32_t)MC_DISPLAY_SLEEP_SECONDS * 1000UL;
+        }
+        mc_logf("[MAIN] display_sleep_s set: %ld sec => %lu ms",
+                sec, (unsigned long)g_displaySleepTimeoutMs);
+      }
+
+      if (key.equalsIgnoreCase("attention_text")) {
+        UIMining::instance().setAttentionDefaultText(val.c_str());
+        mc_logf("[MAIN] attention_text set: %s", val.c_str());
+      }
+
+      Serial.print("@OK SET ");
+      Serial.println(key);
+
+    } else {
+      Serial.print("@ERR SET ");
+      Serial.print(key);
+      Serial.print(" ");
+      Serial.println(err);
+    }
+    return;
+
+  }
+
+  if (cmd.equalsIgnoreCase("SAVE")) {
+    String err;
+    if (mcConfigSave(err)) Serial.println("@OK SAVE");
+    else { Serial.print("@ERR SAVE "); Serial.println(err); }
+    return;
+  }
+
+  if (cmd.equalsIgnoreCase("REBOOT")) {
+    Serial.println("@OK REBOOT");
+    Serial.flush();
+    delay(100);
+    ESP.restart();
+    return;
+  }
+
+
+
+  // 未知コマンド
+  Serial.print("@ERR unknown_cmd: ");
+  Serial.println(line);
+}
+
+static void pollSetupSerial() {
+  while (Serial.available() > 0) {
+    const char c = (char)Serial.read();
+    if (c == '\r') continue;
+
+    if (c == '\n') {
+      g_setupLine[g_setupLineLen] = '\0';
+      handleSetupLine(g_setupLine);
+      g_setupLineLen = 0;
+      continue;
+    }
+
+    // バッファ満杯なら捨ててERR返す（暴走防止）
+    if (g_setupLineLen + 1 >= sizeof(g_setupLine)) {
+      g_setupLineLen = 0;
+      Serial.println("@ERR line_too_long");
+      continue;
+    }
+
+    g_setupLine[g_setupLineLen++] = c;
+  }
+}
+
+
+
 
 // Azure TTS
 static AzureTts g_tts;
@@ -103,8 +267,7 @@ static bool g_timeNtpDone = false;
 
 // 画面関連の定数
 static const uint8_t  DISPLAY_ACTIVE_BRIGHTNESS = 128;     // 通常時の明るさ
-static const uint32_t DISPLAY_SLEEP_TIMEOUT_MS  =
-    (uint32_t)MC_DISPLAY_SLEEP_SECONDS * 1000UL;           // 設定値[秒]→[ms]で画面OFF
+
 
 // スリープ前の「Zzz…」表示時間 [ms]
 static const uint32_t DISPLAY_SLEEP_MESSAGE_MS  = 5000UL;  // ここを変えれば好きな秒数に
@@ -208,11 +371,13 @@ static void setupTimeNTP() {
 void setup() {
   // --- シリアルとログ（最初に開く） ---
   Serial.begin(115200);
+  mcConfigBegin();
+
   delay(50);
   mc_logf("[MAIN] setup() start");
 
   // --- CPUクロックを最大に ---
-  setCpuFrequencyMhz(180); //熱いので240から下げた。そのうち熱を監視して変えられるようにしたい。
+  setCpuFrequencyMhz(160); //熱いので240から下げた。そのうち熱を監視して変えられるようにしたい。
   
   // --- M5Unified の設定 ---
   auto cfg_m5 = M5.config();
@@ -231,6 +396,14 @@ void setup() {
 
   // config（cfg を使う処理がこの後にあるので、ここで取っておく）
   const auto& cfg = appConfig();
+
+  // Apply display sleep seconds from mc_config_store (via @CFG JSON)
+  {
+    long sec = getDisplaySleepSecondsFromStore_((long)MC_DISPLAY_SLEEP_SECONDS);
+    g_displaySleepTimeoutMs = (uint32_t)sec * 1000UL;
+    mc_logf("[MAIN] display_sleep_s=%ld => timeout=%lu ms",
+            sec, (unsigned long)g_displaySleepTimeoutMs);
+  }
 
   // Azure TTS 初期化
   g_tts.begin();
@@ -280,6 +453,9 @@ void setup() {
 
 void loop() {
   M5.update();
+
+  // Web setup serial commands
+  pollSetupSerial();
 
   unsigned long now = millis();
   if (g_orch.tick((uint32_t)now)) {
@@ -842,7 +1018,7 @@ static uint32_t s_lastTouchPollMs = 0;
   }
 
   // --- 一定時間無操作なら画面OFFマイニングは継続！---
-  if (!displaySleeping && (now - lastInputMs >= DISPLAY_SLEEP_TIMEOUT_MS)) {
+  if (!displaySleeping && (now - lastInputMs >= g_displaySleepTimeoutMs)) {
     mc_logf("[MAIN] display sleep (screen off)");
 
     // 右パネルだけ「Zzz…」

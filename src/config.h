@@ -1,15 +1,20 @@
 // src/config.h
 #pragma once
 #include <Arduino.h>
-#include "config_private.h"   // ← 秘密情報はここから
 
-// 無操作スリープ秒数（config_private で未定義なら 60 秒）
+// ★ここがポイント：配布ビルドでは config_private.h を読まない
+#if !defined(MC_DISABLE_CONFIG_PRIVATE)
+  #if __has_include("config_private.h")
+    #include "config_private.h"
+  #endif
+#endif
+
+#include "mc_config_store.h"
+
 #ifndef MC_DISPLAY_SLEEP_SECONDS
 #define MC_DISPLAY_SLEEP_SECONDS 60
 #endif
 
-// TTS中は「安全側」：マイニングを一時停止/弱める
-// 0 = 停止(最強に安定) / 1 = 片スレ / 2 = 通常
 #ifndef MC_TTS_ACTIVE_THREADS_DURING_TTS
 #define MC_TTS_ACTIVE_THREADS_DURING_TTS 0
 #endif
@@ -27,7 +32,6 @@ struct AppConfig {
   const char* duco_rig_name;
   const char* duco_banner;
 
-  // Azure Speech (TTS)
   const char* az_speech_region;
   const char* az_speech_key;
   const char* az_tts_voice;
@@ -39,24 +43,31 @@ struct AppConfig {
 };
 
 inline const AppConfig& appConfig() {
-  static const AppConfig cfg{
-    MC_WIFI_SSID,
-    MC_WIFI_PASS,
-    MC_DUCO_USER,
-    MC_DUCO_MINER_KEY,
+  static AppConfig cfg{
+    mcCfgWifiSsid(),
+    mcCfgWifiPass(),
+    mcCfgDucoUser(),
+    mcCfgDucoKey(),
 
-    "Mining-Stackchan-Core2",   // DUCO_RIG_NAME
-    "M5StackCore2",             // DUCO_BANNER
+    "Mining-Stackchan-Core2",
+    "M5StackCore2",
 
-    // Azure Speech (TTS)
-    MC_AZ_SPEECH_REGION,
-    MC_AZ_SPEECH_KEY,
-    MC_AZ_TTS_VOICE,
+    mcCfgAzRegion(),
+    mcCfgAzKey(),
+    mcCfgAzVoice(),
 
-    "Mining-Stackchan-Core2",   // APP_NAME
-    "0.61",                     // APP_VERSION
+    "Mining-Stackchan-Core2",
+    "0.63",
 
-    MC_ATTENTION_TEXT           // ATTENTION_TEXT
+    MC_ATTENTION_TEXT
   };
+  // 実行中にSETされた場合にも反映されるよう、毎回上書き（ポインタ差し替えのみ）
+  cfg.wifi_ssid = mcCfgWifiSsid();
+  cfg.wifi_pass = mcCfgWifiPass();
+  cfg.duco_user = mcCfgDucoUser();
+  cfg.duco_miner_key = mcCfgDucoKey();
+  cfg.az_speech_region = mcCfgAzRegion();
+  cfg.az_speech_key    = mcCfgAzKey();
+  cfg.az_tts_voice     = mcCfgAzVoice();
   return cfg;
 }
