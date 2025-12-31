@@ -25,9 +25,6 @@
 #include "stackchan_behavior.h"
 #include "orchestrator.h"
 
-#include "app_test_mode.h"
-#include "ui_test_core2.h"
-
 
 // UI 更新用の前回時刻 [ms]
 static unsigned long lastUiMs = 0;
@@ -36,18 +33,9 @@ static unsigned long lastUiMs = 0;
 enum AppMode : uint8_t {
   MODE_DASH = 0,
   MODE_STACKCHAN = 1,
-  MODE_TEST = 2,
 };
 
 static AppMode g_mode = MODE_DASH;
-static AppMode g_modeBeforeTest = MODE_DASH;
-
-// Test mode
-static AppTestMode g_test;
-static UITestCore2  g_testUi;
-
-// Test中はマイニングを強制pauseしたい（TTS再生中pauseとORで統合）
-static bool g_pauseMiningForTest = false;
 
 
 // "Attention" ("WHAT?") mode: short-lived focus state triggered by tap in Stackchan screen.
@@ -287,16 +275,18 @@ static void applyMiningPolicyForTts(bool ttsBusy) {
   (void)ttsBusy;
 
   const bool speaking = M5.Speaker.isPlaying();
-  const bool wantPause = speaking || g_pauseMiningForTest;
+  const bool wantPause = speaking;
 
   if (wantPause != s_pausedByTts) {
-    mc_logf("[TTS] mining pause: %d -> %d (speaking=%d test=%d)",
-            (int)s_pausedByTts, (int)wantPause, (int)speaking, (int)g_pauseMiningForTest);
+    mc_logf("[TTS] mining pause: %d -> %d (speaking=%d)",
+            (int)s_pausedByTts, (int)wantPause, (int)speaking);
 
-    setMiningPaused(wantPause);      // ★ mining_task 側で実装（後述）
+    setMiningPaused(wantPause);
     s_pausedByTts = wantPause;
   }
 }
+
+
 
 // ---------------- WiFi / Time ----------------
 
@@ -367,7 +357,6 @@ static void setupTimeNTP() {
 
 
 
-// ---------------- Arduino entry points ----------------
 void setup() {
   // --- シリアルとログ（最初に開く） ---
   Serial.begin(115200);
@@ -377,24 +366,22 @@ void setup() {
   mc_logf("[MAIN] setup() start");
 
   // --- CPUクロックを最大に ---
-  setCpuFrequencyMhz(160); //熱いので240から下げた。そのうち熱を監視して変えられるようにしたい。
-  
+  setCpuFrequencyMhz(160);
+
   // --- M5Unified の設定 ---
   auto cfg_m5 = M5.config();
-  cfg_m5.output_power  = true;   // 外部5VはON
-  cfg_m5.clear_display = true;   // 起動時に画面クリア
+  cfg_m5.output_power  = true;
+  cfg_m5.clear_display = true;
 
-  // 使っていない内蔵デバイスはOFFにしておくと安定度アップが期待できる
-  cfg_m5.internal_imu = false;   // 今はIMU使っていないのでOFF
-  cfg_m5.internal_mic = false;   // マイクも使っていないのでOFF
-  cfg_m5.internal_spk = true;    // スピーカーはビープで使うのでON
-  cfg_m5.internal_rtc = true;    // RTCはNTPと併用したいのでONのまま
+  cfg_m5.internal_imu = false;
+  cfg_m5.internal_mic = false;
+  cfg_m5.internal_spk = true;
+  cfg_m5.internal_rtc = true;
 
   mc_logf("[MAIN] call M5.begin()");
   M5.begin(cfg_m5);
   mc_logf("[MAIN] M5.begin() done");
 
-  // config（cfg を使う処理がこの後にあるので、ここで取っておく）
   const auto& cfg = appConfig();
 
   // Apply display sleep seconds from mc_config_store (via @CFG JSON)
@@ -409,40 +396,27 @@ void setup() {
   g_tts.begin();
   g_orch.init();
 
-  //テスト枠を初期化
-  g_test.begin(&g_tts);
-  g_testUi.begin();
-
   // --- 画面の初期状態 ---
   M5.Display.setBrightness(DISPLAY_ACTIVE_BRIGHTNESS);
   M5.Display.fillScreen(BLACK);
   M5.Display.setTextColor(WHITE, BLACK);
-
 
   // ★ UI起動 & スプラッシュ表示
   UIMining::instance().begin(cfg.app_name, cfg.app_version);
   UIMining::instance().setAttentionDefaultText(cfg.attention_text);
 
   // スタックチャン「喋る/黙る」時間設定（単位: ms）
-  // 喋る時間 = talkMin + 0〜talkVar の乱数加算
-  // 黙る時間 = silentMin + 0〜silentVar の乱数加算
   UIMining::instance().setStackchanSpeechTiming(
-    2200, 1200,   // 喋る: 最短2200ms + (0〜1200ms) → 2.2〜3.4秒
-    900,  1400    // 黙る: 最短 900ms + (0〜1400ms) → 0.9〜2.3秒
+    2200, 1200,   // 喋る: 2.2〜3.4秒
+    900,  1400    // 黙る: 0.9〜2.3秒
   );
-
 
   // タイマー類の初期化
   lastUiMs        = 0;
   lastInputMs     = millis();
   displaySleeping = false;
 
-  // 起動ログ
   mc_logf("%s %s booting...", cfg.app_name, cfg.app_version);
-
-  // ★ WiFi/NTPは loop() 側でノンブロッキングに進めるのでここでは呼ばない
-  // wifi_connect();
-  // setupTimeNTP();
 
   // FreeRTOS タスクでマイニング開始
   startMiner();
@@ -457,26 +431,26 @@ void loop() {
   // Web setup serial commands
   pollSetupSerial();
 
-  unsigned long now = millis();
-  if (g_orch.tick((uint32_t)now)) {
-    // ThinkWait timeout recovery: reset TTS session and inflight tracking.
-    LOG_EVT_INFO("EVT_ORCH_TIMEOUT_MAIN",
-                 "action=session_reset inflight=%lu rid=%lu",
-                 (unsigned long)g_ttsInflightId,
-                 (unsigned long)g_ttsInflightRid);
+  const uint32_t now = (uint32_t)millis();
+
+  // Orchestrator tick (timeout recovery)
+  if (g_orch.tick(now)) {
+    LOG_EVT_INFO("EVT_ORCH_TIMEOUT_MAIN", "recover=1");
     g_tts.requestSessionReset();
-    g_ttsInflightId  = 0;
+    g_ttsInflightId = 0;
     g_ttsInflightRid = 0;
-    UIMining::instance().setStackchanSpeech("");
-    g_ttsInflightSpeechText = "";
     g_ttsInflightSpeechId = 0;
+    g_ttsInflightSpeechText = "";
+    UIMining::instance().setStackchanSpeech("");
   }
 
-// TTSの再生状態の更新と完了検知
+  // TTS state update + completion
   g_tts.poll();
+
   const bool audioPlayingNow = M5.Speaker.isPlaying();
   if (!g_prevAudioPlaying && audioPlayingNow && g_ttsInflightId != 0) {
     g_orch.onAudioStart(g_ttsInflightId);
+
     if (g_ttsInflightSpeechId != 0 &&
         g_ttsInflightSpeechId == g_ttsInflightId &&
         g_ttsInflightSpeechText.length() > 0) {
@@ -488,7 +462,9 @@ void loop() {
     }
   }
   g_prevAudioPlaying = audioPlayingNow;
-  bool ttsBusyNow = g_tts.isBusy();
+
+  const bool ttsBusyNow = g_tts.isBusy();
+
   uint32_t gotId = 0;
   if (g_tts.consumeDone(&gotId)) {
     LOG_EVT_INFO("EVT_TTS_DONE_RX_MAIN",
@@ -496,13 +472,16 @@ void loop() {
                  (unsigned long)gotId,
                  (unsigned long)g_ttsInflightId,
                  (unsigned long)g_ttsInflightRid);
+
     bool desync = false;
     const bool ok = g_orch.onTtsDone(gotId, &desync);
     if (ok) {
       LOG_EVT_INFO("EVT_TTS_DONE", "rid=%lu tts_id=%lu",
                    (unsigned long)g_ttsInflightRid, (unsigned long)gotId);
+
       UIMining::instance().setStackchanSpeech("");
       LOG_EVT_INFO("EVT_PRESENT_SPEECH_CLEAR", "tts_id=%lu", (unsigned long)gotId);
+
       g_ttsInflightSpeechText = "";
       g_ttsInflightSpeechId = 0;
       g_ttsInflightId = 0;
@@ -512,6 +491,7 @@ void loop() {
                    "got_tts_id=%lu expected=%lu",
                    (unsigned long)gotId,
                    (unsigned long)g_ttsInflightId);
+
       if (desync) {
         LOG_EVT_INFO("EVT_ORCH_SPEAK_DESYNC",
                      "got=%lu expect=%lu",
@@ -523,7 +503,7 @@ void loop() {
       }
     }
   }
-  g_ttsPrevBusy = ttsBusyNow;
+
   g_behavior.setTtsSpeaking(ttsBusyNow);
   applyMiningPolicyForTts(ttsBusyNow);
 
@@ -553,7 +533,7 @@ void loop() {
 
   // Wi-Fi切断検知：keep-alive中のTLSセッションを次回に備えて破棄予約
   static wl_status_t s_prevWifi = WL_IDLE_STATUS;
-  wl_status_t wifiNow = WiFi.status();
+  const wl_status_t wifiNow = WiFi.status();
   if (s_prevWifi == WL_CONNECTED && wifiNow != WL_CONNECTED) {
     mc_logf("[WIFI] disconnected (status=%d) -> reset TTS session", (int)wifiNow);
     g_tts.requestSessionReset();
@@ -563,18 +543,15 @@ void loop() {
   // --- 入力検出（ボタン + タッチ） ---
   bool anyInput = false;
 
-
-  // ★ wasPressed() は「読んだ瞬間に消費」されるので、必ず一度だけ読む
   const bool btnA = M5.BtnA.wasPressed();
   const bool btnB = M5.BtnB.wasPressed();
   const bool btnC = M5.BtnC.wasPressed();
   if (btnA || btnB || btnC) {
     anyInput = true;
-    g_suppressTouchBeepOnce = true;   // ★ 次のUI更新でタッチ開始ビープを1回だけ抑止
+    g_suppressTouchBeepOnce = true;
   }
 
-
-  // タッチ入力（短タップも拾えるように「押された瞬間」を検出）
+  // タッチ入力
   static bool prevTouchPressed = false;
   bool touchPressed = false;
   bool touchDown    = false;
@@ -583,11 +560,9 @@ void loop() {
   int touchY = 0;
 
   auto& tp = M5.Touch;
-  // Touch poll can occasionally hang if hit too frequently on some Core2 units.
-  // Poll at a modest rate (e.g. 25ms) and reuse the cached values.
-static uint32_t s_lastTouchPollMs = 0;
-  static int s_touchX = 0;
-  static int s_touchY = 0;
+  static uint32_t s_lastTouchPollMs = 0;
+  static int  s_touchX = 0;
+  static int  s_touchY = 0;
   static bool s_touchPressed = false;
 
   if (tp.isEnabled()) {
@@ -608,12 +583,10 @@ static uint32_t s_lastTouchPollMs = 0;
     touchDown = touchPressed && !prevTouchPressed;
     prevTouchPressed = touchPressed;
 
-    if (touchPressed) {
-      anyInput = true;
-    }
+    if (touchPressed) anyInput = true;
   }
 
-  // Cache touch state for UI (avoid extra I2C touch reads inside UI drawing)
+  // Cache touch state for UI
   {
     UIMining::TouchSnapshot ts;
     ts.enabled = tp.isEnabled();
@@ -624,81 +597,22 @@ static uint32_t s_lastTouchPollMs = 0;
     UIMining::instance().setTouchSnapshot(ts);
   }
 
-
-
-
   // --- スリープ中の復帰処理 ---
   if (displaySleeping) {
     if (anyInput) {
-      // 何か入力があったら画面ONにして、このフレームは「起きるだけ」
       mc_logf("[MAIN] display wake (sleep off)");
       M5.Display.setBrightness(DISPLAY_ACTIVE_BRIGHTNESS);
       displaySleeping = false;
       lastInputMs     = now;
     }
-
     delay(2);
     return;
   }
-
 
   // ここから「画面がON」の時の処理
   UIMining& ui = UIMining::instance();
 
-  // --- Cボタン：テスト画面へ（トグル） ---
-  if (btnC) {
-    M5.Speaker.tone(1500, 40);
-
-    if (g_mode != MODE_TEST) {
-      g_modeBeforeTest = g_mode;
-
-      // Stackchanから離脱するなら後始末（Attention解除も含む）
-      if (g_mode == MODE_STACKCHAN) {
-        ui.onLeaveStackchanMode();
-
-        if (g_attentionActive) {
-          g_attentionActive = false;
-          if (g_savedYieldValid) setMiningYieldProfile(g_savedYield);
-          ui.triggerAttention(0);
-        }
-      }
-
-      g_mode = MODE_TEST;
-      g_pauseMiningForTest = true;
-      g_test.enter(now);
-      g_testUi.markDirty();
-      mc_logf("[MAIN] BtnC pressed, enter TEST mode");
-
-    } else {
-      g_pauseMiningForTest = false;
-      g_test.exit(now);
-      g_mode = g_modeBeforeTest;
-      g_testUi.markDirty();
-      mc_logf("[MAIN] BtnC pressed, exit TEST mode -> mode=%d", (int)g_mode);
-
-      if (g_mode == MODE_STACKCHAN) {
-        ui.onEnterStackchanMode();
-      }
-    }
-  }
-
-  // --- Test mode：テスト画面だけ回して return ---
-  if (g_mode == MODE_TEST) {
-    TestInput tin;
-    tin.btnA = btnA; tin.btnB = btnB; tin.btnC = btnC;
-    tin.touchDown = touchDown;
-    tin.touchX = touchX;
-    tin.touchY = touchY;
-
-    g_test.update(now, tin);
-    g_testUi.draw(now, g_test.state());
-
-    delay(2);
-    return;
-  }
-
-
-  // Bボタン：固定文を喋る（まずは動作確認用）
+  // Bボタン：固定文を喋る（動作確認用）
   if (btnB) {
     const char* text = "Hello from Mining Stackchan.";
     if (!g_tts.speakAsync(text, (uint32_t)0, nullptr)) {
@@ -706,12 +620,7 @@ static uint32_t s_lastTouchPollMs = 0;
     }
   }
 
-
-
-  if (anyInput) {
-    lastInputMs = now;
-  }
-
+  if (anyInput) lastInputMs = now;
 
   // --- Aボタン：ダッシュボード <-> スタックチャン + ビープ ---
   if (btnA) {
@@ -720,11 +629,10 @@ static uint32_t s_lastTouchPollMs = 0;
     if (g_mode == MODE_DASH) {
       g_mode = MODE_STACKCHAN;
       ui.onEnterStackchanMode();
-    } else if (g_mode == MODE_STACKCHAN) {
+    } else {
       g_mode = MODE_DASH;
       ui.onLeaveStackchanMode();
 
-      // Leaving stackchan -> clear attention + restore mining yield
       if (g_attentionActive) {
         g_attentionActive = false;
         if (g_savedYieldValid) setMiningYieldProfile(g_savedYield);
@@ -735,22 +643,11 @@ static uint32_t s_lastTouchPollMs = 0;
     mc_logf("[MAIN] BtnA pressed, mode=%d", (int)g_mode);
   }
 
-
-  // --- Attention mode: tap in Stackchan screen to go "WHAT?" and throttle mining ---
-  // NOTE: Right now we only apply "strong yield" (so mining continues but UI becomes very responsive).
-  // Future hooks:
-  //   - STOP: setMiningActiveThreads(0)
-  //   - HALF: setMiningActiveThreads(1)
-
-
-  // --- 4)C: pending があれば Azure TTS を開始（取りこぼしOK：最新優先） ---
-  
-
-  if ((g_mode == MODE_STACKCHAN) && touchDown && !displaySleeping) {
-    const uint32_t dur = 3000; // ms
+  // --- Attention mode: tap in Stackchan screen ---
+  if ((g_mode == MODE_STACKCHAN) && touchDown) {
+    const uint32_t dur = 3000;
     mc_logf("[ATTN] enter");
 
-    // save current yield once
     if (!g_attentionActive) {
       g_savedYield = getMiningYieldProfile();
       g_savedYieldValid = true;
@@ -762,47 +659,44 @@ static uint32_t s_lastTouchPollMs = 0;
     ui.triggerAttention(dur, appConfig().attention_text);
     M5.Speaker.tone(1800, 30);
 
-    // Attention は bubble-only より優先。出ていたら即クリアしてログを揃える。
     if (g_bubbleOnlyActive) {
+      const uint32_t oldRid = g_bubbleOnlyRid;
+      const int oldType = g_bubbleOnlyEvType;
+
       g_bubbleOnlyActive = false;
       g_bubbleOnlyUntilMs = 0;
       g_bubbleOnlyRid = 0;
       g_bubbleOnlyEvType = 0;
 
-      // UI上も消す（Attentionが出るが、状態としては bubble-only を終わらせる）
       UIMining::instance().setStackchanSpeech("");
 
       LOG_EVT_INFO("EVT_PRESENT_BUBBLE_ONLY_CLEAR",
                    "rid=%lu type=%d mode=%d attn=%d reason=attention_start",
-                   (unsigned long)g_bubbleOnlyRid, g_bubbleOnlyEvType,
+                   (unsigned long)oldRid, oldType,
                    (int)g_mode, g_attentionActive ? 1 : 0);
     }
   }
 
-  // Attention timeout -> restore mining yield and clear bubble
+  // Attention timeout
   if (g_attentionActive && (int32_t)(g_attentionUntilMs - now) <= 0) {
     g_attentionActive = false;
     mc_logf("[ATTN] exit");
 
-    if (g_savedYieldValid) {
-      setMiningYieldProfile(g_savedYield);
-    } else {
-      setMiningYieldProfile(MiningYieldNormal());
-    }
+    if (g_savedYieldValid) setMiningYieldProfile(g_savedYield);
+    else setMiningYieldProfile(MiningYieldNormal());
+
     ui.triggerAttention(0);
   }
 
-
-
   // --- 起動時の WiFi 接続 & NTP 同期（ノンブロッキング） ---
-  bool wifiDone = wifi_connect();
+  const bool wifiDone = wifi_connect();
   if (wifiDone && !g_timeNtpDone && WiFi.status() == WL_CONNECTED) {
     setupTimeNTP();
     g_timeNtpDone = true;
   }
 
   // --- UI 更新（100ms ごとに1回） ---
-  if (now - lastUiMs >= 100) {
+  if ((uint32_t)(now - lastUiMs) >= 100) {
     lastUiMs = now;
 
     MiningSummary summary;
@@ -813,8 +707,6 @@ static uint32_t s_lastTouchPollMs = 0;
       g_bubbleOnlyActive = false;
       g_bubbleOnlyUntilMs = 0;
 
-      // 注意：Stackchan画面かつAttentionが出ていないときだけ空にする
-      // （Attention中に空にすると WHAT? が消えるので）
       if (g_mode == MODE_STACKCHAN && !g_attentionActive) {
         UIMining::instance().setStackchanSpeech("");
       }
@@ -828,7 +720,6 @@ static uint32_t s_lastTouchPollMs = 0;
       g_bubbleOnlyEvType = 0;
     }
 
-    // (ui is already referenced above)
     UIMining::PanelData data;
     buildPanelData(summary, ui, data);
 
@@ -842,51 +733,28 @@ static uint32_t s_lastTouchPollMs = 0;
                    reaction.speak ? 1 : 0, ttsBusyNow ? 1 : 0, (int)g_mode, g_attentionActive ? 1 : 0);
 
       const bool suppressedByAttention = (g_mode == MODE_STACKCHAN) && g_attentionActive;
-
-      // IdleTick は「何も起きてない」扱いとして、Avatarには触らない
       const bool isIdleTick = (reaction.evType == StackchanEventType::IdleTick);
 
-      bool appliedToUi = false;
+      if (g_mode == MODE_STACKCHAN && !isIdleTick) {
+        const bool isBubbleInfo =
+          (reaction.evType == StackchanEventType::InfoPool) ||
+          (reaction.evType == StackchanEventType::InfoPing) ||
+          (reaction.evType == StackchanEventType::InfoHashrate) ||
+          (reaction.evType == StackchanEventType::InfoShares);
 
-      if (g_mode == MODE_STACKCHAN) {
-        if (!isIdleTick) {
-          // ★最短の安定化：TTSが絡む（speak=1）イベントでは Avatar の expression を触らない
-          //   （Core2 + m5stack-avatar の setExpression が稀にハングする対策）
-          //   さらに、バブル専用(Info*)の吹き出しでは表情を変えない（neutralで十分）。
-          const bool isBubbleInfo =
-            (reaction.evType == StackchanEventType::InfoPool) ||
-            (reaction.evType == StackchanEventType::InfoPing) ||
-            (reaction.evType == StackchanEventType::InfoHashrate) ||
-            (reaction.evType == StackchanEventType::InfoShares);
-
-          if (!reaction.speak && !isBubbleInfo) {
-            // expression は変化がある時だけ反映（無駄タッチ & ハング率下げ）
-            static bool s_hasLastExp = false;
-            static m5avatar::Expression s_lastExp = m5avatar::Expression::Neutral;
-
-            if (!s_hasLastExp || reaction.expression != s_lastExp) {
-              ui.setStackchanExpression(reaction.expression);
-              s_lastExp = reaction.expression;
-              s_hasLastExp = true;
-            }
+        if (!reaction.speak && !isBubbleInfo) {
+          static bool s_hasLastExp = false;
+          static m5avatar::Expression s_lastExp = m5avatar::Expression::Neutral;
+          if (!s_hasLastExp || reaction.expression != s_lastExp) {
+            ui.setStackchanExpression(reaction.expression);
+            s_lastExp = reaction.expression;
+            s_hasLastExp = true;
           }
-
-          appliedToUi = true;
-        } else {
-          // IdleTick: UI側に任せる
-          appliedToUi = false;
         }
       }
 
-      LOG_EVT_INFO("EVT_PRESENT_UI_APPLY",
-                   "rid=%lu type=%d prio=%d speak=%d suppressed_by_attention=%d applied=%d",
-                   (unsigned long)reaction.rid, (int)reaction.evType, (int)reaction.priority,
-                   reaction.speak ? 1 : 0, suppressedByAttention ? 1 : 0, appliedToUi ? 1 : 0);
-
       // ---- bubble-only present (speak=0) ----
-      // 注意：IdleTick は「何も起きてない」扱いで吹き出しも出さない（既存方針）
       if (g_mode == MODE_STACKCHAN) {
-        // TTSイベントが来たら、bubble-only は邪魔になるので終了扱いにする（音声同期側が吹き出しを管理する）
         if (reaction.speak && g_bubbleOnlyActive) {
           g_bubbleOnlyActive = false;
           g_bubbleOnlyUntilMs = 0;
@@ -904,7 +772,6 @@ static uint32_t s_lastTouchPollMs = 0;
           g_bubbleOnlyEvType = 0;
         }
 
-        // speak=0 でも text があれば吹き出しを表示する（Attention中は抑制）
         if (!reaction.speak &&
             !isIdleTick &&
             reaction.speechText.length() &&
@@ -929,19 +796,12 @@ static uint32_t s_lastTouchPollMs = 0;
         }
       }
 
-
-      // TTS は speak=1 かつ textあり の時だけ
+      // TTS
       if (reaction.speak && reaction.speechText.length()) {
         auto cmd = g_orch.makeSpeakStartCmd(reaction.rid, reaction.speechText,
                                             toOrchPrio(reaction.priority),
                                             Orchestrator::OrchKind::BehaviorSpeak);
-        if (!cmd.valid) {
-          LOG_EVT_INFO("EVT_PRESENT_TTS_START_FAIL",
-                       "rid=%lu type=%d prio=%d busy=%d mode=%d attn=%d reason=invalid_cmd",
-                       (unsigned long)reaction.rid,
-                       (int)reaction.evType, (int)reaction.priority,
-                       ttsBusyNow ? 1 : 0, (int)g_mode, g_attentionActive ? 1 : 0);
-        } else {
+        if (cmd.valid) {
           const bool canSpeakNow = (!ttsBusyNow) && (g_ttsInflightId == 0);
           if (canSpeakNow) {
             const bool speakOk = g_tts.speakAsync(cmd.text, cmd.ttsId);
@@ -951,15 +811,10 @@ static uint32_t s_lastTouchPollMs = 0;
               g_ttsInflightSpeechText = cmd.text;
               g_ttsInflightSpeechId = cmd.ttsId;
               g_orch.setExpectedSpeak(cmd.ttsId, reaction.rid);
+
               LOG_EVT_INFO("EVT_PRESENT_TTS_START",
                            "rid=%lu tts_id=%lu type=%d prio=%d busy=%d mode=%d attn=%d",
                            (unsigned long)reaction.rid, (unsigned long)cmd.ttsId,
-                           (int)reaction.evType, (int)reaction.priority,
-                           ttsBusyNow ? 1 : 0, (int)g_mode, g_attentionActive ? 1 : 0);
-            } else {
-              LOG_EVT_INFO("EVT_PRESENT_TTS_START_FAIL",
-                           "rid=%lu type=%d prio=%d busy=%d mode=%d attn=%d reason=speak_fail",
-                           (unsigned long)reaction.rid,
                            (int)reaction.evType, (int)reaction.priority,
                            ttsBusyNow ? 1 : 0, (int)g_mode, g_attentionActive ? 1 : 0);
             }
@@ -968,21 +823,22 @@ static uint32_t s_lastTouchPollMs = 0;
             LOG_EVT_INFO("EVT_PRESENT_TTS_DEFER_BUSY",
                          "rid=%lu tts_id=%lu prio=%d busy=%d mode=%d attn=%d",
                          (unsigned long)reaction.rid, (unsigned long)cmd.ttsId,
-                         (int)reaction.priority, ttsBusyNow ? 1 : 0, (int)g_mode, g_attentionActive ? 1 : 0);
+                         (int)reaction.priority, ttsBusyNow ? 1 : 0,
+                         (int)g_mode, g_attentionActive ? 1 : 0);
           }
         }
       }
     } else {
-      // No reaction popped: treat as "presenter heartbeat" (not an error / not an event)
-      // Log only on state-change and with a low-rate heartbeat.
+      // low-rate heartbeat only
       static uint32_t s_lastHbMs = 0;
       static uint32_t s_emptyStreak = 0;
       s_emptyStreak++;
 
-      const uint32_t PRESENTER_HEARTBEAT_MS = 10000;    // 10sに1回だけ心拍
-      bool stateChanged = (ttsBusyNow != g_lastPopEmptyBusy) ||
-                          (g_mode != g_lastPopEmptyMode) ||
-                          (g_attentionActive != g_lastPopEmptyAttn);
+      const uint32_t PRESENTER_HEARTBEAT_MS = 10000;
+      const bool stateChanged =
+        (ttsBusyNow != g_lastPopEmptyBusy) ||
+        (g_mode != g_lastPopEmptyMode) ||
+        (g_attentionActive != g_lastPopEmptyAttn);
 
       if (stateChanged || (now - s_lastHbMs) >= PRESENTER_HEARTBEAT_MS) {
         LOG_EVT_DEBUG("EVT_PRESENT_HEARTBEAT",
@@ -993,46 +849,35 @@ static uint32_t s_lastTouchPollMs = 0;
         s_lastHbMs = now;
         s_emptyStreak = 0;
 
-        // keep last state for change detection
         g_lastPopEmptyBusy = ttsBusyNow;
         g_lastPopEmptyMode = g_mode;
         g_lastPopEmptyAttn = g_attentionActive;
       }
     }
 
-
-    // ticker は Step1 の buildTicker(summary) のまま
     String ticker = buildTicker(summary);
 
-    // BtnA/B/C が反応してから、次の drawAll 1回だけ開始ビープを抑止
-    const bool suppressTouchBeep = g_suppressTouchBeepOnce;
-    g_suppressTouchBeepOnce = false;
-
-    // ここで画面を切り替え
-    if ((g_mode == MODE_STACKCHAN)) {
-      ui.drawStackchanScreen(data);   // スタックチャン画面      // (Phase2) legacy pending path disabled
-
+    // 画面描画
+    if (g_mode == MODE_STACKCHAN) {
+      ui.drawStackchanScreen(data);
     } else {
-      ui.drawAll(data, ticker);       // ダッシュボード画面
+      ui.drawAll(data, ticker);
     }
+
+    // ボタン押下に伴うタッチ開始ビープ抑止（次の draw 1回だけ）
+    g_suppressTouchBeepOnce = false;
   }
 
-  // --- 一定時間無操作なら画面OFFマイニングは継続！---
-  if (!displaySleeping && (now - lastInputMs >= g_displaySleepTimeoutMs)) {
+  // --- 一定時間無操作なら画面OFF（マイニングは継続）---
+  if (!displaySleeping && (uint32_t)(now - lastInputMs) >= g_displaySleepTimeoutMs) {
     mc_logf("[MAIN] display sleep (screen off)");
-
-    // 右パネルだけ「Zzz…」
     UIMining::instance().drawSleepMessage();
-    delay(DISPLAY_SLEEP_MESSAGE_MS);  // ここを定数に
-
+    delay(DISPLAY_SLEEP_MESSAGE_MS);
     M5.Display.setBrightness(0);
     displaySleeping = true;
   }
 
   // ---- TTS中のマイニング負荷制御（捨てない版） ----
-  // ・再生中: applyMiningPolicyForTts() が pause する（JOB維持）
-  // ・取得中/準備中: STOP(0)はJOBを捨てやすいので、ここでは yield 強化に留める
-  // ・Attention(WHAT?) が yield を管理している時は、そちらを優先する
   static bool s_ttsYieldApplied = false;
   static MiningYieldProfile s_ttsSavedYield = MiningYieldNormal();
   static bool s_ttsSavedYieldValid = false;
@@ -1047,21 +892,15 @@ static uint32_t s_lastTouchPollMs = 0;
     }
   } else {
     if (s_ttsYieldApplied && !g_attentionActive) {
-      if (s_ttsSavedYieldValid) {
-        setMiningYieldProfile(s_ttsSavedYield);
-      } else {
-        setMiningYieldProfile(MiningYieldNormal());
-      }
+      if (s_ttsSavedYieldValid) setMiningYieldProfile(s_ttsSavedYield);
+      else setMiningYieldProfile(MiningYieldNormal());
       s_ttsYieldApplied = false;
       mc_logf("[TTS] mining yield: restore");
     }
   }
 
-
-
   delay(2);
 }
-
 
 
 

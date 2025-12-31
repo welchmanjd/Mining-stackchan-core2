@@ -57,7 +57,7 @@ inline const AppConfig& appConfig() {
     mcCfgAzVoice(),
 
     "Mining-Stackchan-Core2",
-    "0.63",
+    "0.631",
 
     MC_ATTENTION_TEXT
   };
