@@ -55,9 +55,9 @@ void StackchanBehavior::update(const UIMining::PanelData& panel, uint32_t nowMs)
     lastPoolAlive_ = panel.poolAlive;
     lastEventMs_ = nowMs;
 
-    // 15遘貞捉譛溘Ο繝ｼ繝・ｼ域怙蛻昴・陦ｨ遉ｺ繧・5遘貞ｾ後↓・・
+    // 初回の情報バブルは15秒後に出す
     nextInfoMs_ = nowMs + 15000;
-    infoIndex_  = 0;  // POOL 縺九ｉ
+    infoIndex_  = 0;  // POOL から開始
   }
 
   // 掘らないモード（duco_user 空）のときは固定メッセージだけ出す
@@ -82,8 +82,7 @@ void StackchanBehavior::update(const UIMining::PanelData& panel, uint32_t nowMs)
   }
 
   // Detect: pool disconnected (true -> false)
-  // NOTE: "no feedback (timeout)" 縺ｯ縲梧悴謗･邯壹阪〒縺ｯ縺ｪ縺上悟ｿ懃ｭ斐′譚･縺ｪ縺九▲縺溘阪↑縺ｮ縺ｧ縲∫匱隧ｱ繧､繝吶Φ繝医・蜃ｺ縺輔↑縺・・
-  //       繝繝・す繝･繝懊・繝峨〒繧ょ幕繧峨○縺ｪ縺・婿驥昴ｒ邯ｭ謖√☆繧九◆繧√√％縺薙〒 PoolDisconnected 閾ｪ菴薙ｒ謚大宛縺吶ｋ縲・
+  // NOTE: "no feedback (timeout)" は結果レス待ちで接続が死んだわけではないので抑制する
   if (poolInit_ && lastPoolAlive_ && !panel.poolAlive) {
     const bool isTimeoutNoFeedback =
         (panel.poolDiag == "No result response from the pool.");
@@ -116,7 +115,7 @@ void StackchanBehavior::update(const UIMining::PanelData& panel, uint32_t nowMs)
     triggerEvent(ev, nowMs);
   }
 
-  // Idle tick・・nfo縺・5遘偵〒蝗槭ｋ縺ｮ縺ｧ蝓ｺ譛ｬ蜃ｺ縺ｪ縺・′縲∽ｿ晞匱縺ｨ縺励※谿九☆・・
+  // Idle tick: 30秒以上イベントが無ければ弱い反応を出す
   const uint32_t idleMs = 30000;
   if ((uint32_t)(nowMs - lastEventMs_) >= idleMs) {
     triggerEvent(StackchanEventType::IdleTick, nowMs);
@@ -161,7 +160,7 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev, uint32_t nowMs) {
     case StackchanEventType::ShareAccepted:
       r.priority   = ReactionPriority::High;
       r.expression = m5avatar::Expression::Happy;
-      r.speechText = "繧ｷ繧ｧ繧｢迯ｲ蠕励＠縺溘ｈ!";
+      r.speechText = "シェア獲得したよ！";
       r.speak      = true;
       emit = true;
       break;
@@ -169,7 +168,7 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev, uint32_t nowMs) {
     case StackchanEventType::PoolDisconnected:
       r.priority   = ReactionPriority::High;
       r.expression = m5avatar::Expression::Doubt;
-      r.speechText = "繧ｵ繝ｼ繝舌・縺ｫ縺､縺ｪ縺後ｉ縺ｪ縺・∩縺溘＞";
+      r.speechText = "プールが切れたかも……";
       r.speak      = true;
       emit = true;
       break;
