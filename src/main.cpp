@@ -24,6 +24,11 @@
 #include "azure_tts.h"
 #include "stackchan_behavior.h"
 #include "orchestrator.h"
+#include "runtime_features.h"
+
+// Azure TTS
+static AzureTts g_tts;
+#include "runtime_features.h"
 
 
 // UI 更新用の前回時刻 [ms]
@@ -108,6 +113,24 @@ static void handleSetupLine(const char* line) {
     String j = mcConfigGetMaskedJson();
     Serial.print("@CFG ");
     Serial.println(j);
+    return;
+  }
+
+  if (cmd.equalsIgnoreCase("AZTEST")) {
+    const RuntimeFeatures features = getRuntimeFeatures();
+    if (!features.ttsEnabled) {
+      Serial.println("@AZTEST NG missing_required");
+      return;
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("@AZTEST NG wifi_disconnected");
+      return;
+    }
+    // Reload runtime Azure config so tests after SET/SAVE work without reboot.
+    g_tts.begin();
+    bool ok = g_tts.testCredentials();
+    if (ok) Serial.println("@AZTEST OK");
+    else    Serial.println("@AZTEST NG fetch_failed");
     return;
   }
 
@@ -204,8 +227,6 @@ static void pollSetupSerial() {
 
 
 
-// Azure TTS
-static AzureTts g_tts;
 static StackchanBehavior g_behavior;
 static Orchestrator g_orch;
 static uint32_t g_ttsInflightId = 0;
@@ -432,6 +453,7 @@ void loop() {
   pollSetupSerial();
 
   const uint32_t now = (uint32_t)millis();
+  const RuntimeFeatures features = getRuntimeFeatures();
 
   // Orchestrator tick (timeout recovery)
   if (g_orch.tick(now)) {
@@ -615,8 +637,16 @@ void loop() {
   // Bボタン：固定文を喋る（動作確認用）
   if (btnB) {
     const char* text = "Hello from Mining Stackchan.";
-    if (!g_tts.speakAsync(text, (uint32_t)0, nullptr)) {
-      mc_logf("[TTS] speakAsync failed (busy / wifi / config?)");
+    if (features.ttsEnabled) {
+      if (!g_tts.speakAsync(text, (uint32_t)0, nullptr)) {
+        mc_logf("[TTS] speakAsync failed (busy / wifi / config?)");
+      }
+    } else {
+      UIMining::instance().setStackchanSpeech(text);
+      g_bubbleOnlyActive = true;
+      g_bubbleOnlyUntilMs = now + bubbleShowMs(String(text));
+      g_bubbleOnlyRid = 0;
+      g_bubbleOnlyEvType = 0;
     }
   }
 
@@ -727,6 +757,11 @@ void loop() {
 
     StackchanReaction reaction;
     if (g_behavior.popReaction(&reaction)) {
+      const bool allowSpeak = features.ttsEnabled;
+      if (!allowSpeak && reaction.speak) {
+        reaction.speak = false;
+      }
+
       LOG_EVT_INFO("EVT_PRESENT_POP",
                    "rid=%lu type=%d prio=%d speak=%d busy=%d mode=%d attn=%d",
                    (unsigned long)reaction.rid, (int)reaction.evType, (int)reaction.priority,
@@ -797,7 +832,7 @@ void loop() {
       }
 
       // TTS
-      if (reaction.speak && reaction.speechText.length()) {
+      if (reaction.speak && reaction.speechText.length() && features.ttsEnabled) {
         auto cmd = g_orch.makeSpeakStartCmd(reaction.rid, reaction.speechText,
                                             toOrchPrio(reaction.priority),
                                             Orchestrator::OrchKind::BehaviorSpeak);
@@ -918,5 +953,3 @@ static OrchPrio toOrchPrio(ReactionPriority p) {
     default:                       return OrchPrio::Normal;
   }
 }
-
-

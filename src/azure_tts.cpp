@@ -477,6 +477,12 @@ AzureTts::RuntimeConfig AzureTts::runtimeConfig() const { return cfg_; }
 void AzureTts::setPlaybackEnabled(bool en) { playbackEnabled_ = en; }
 bool AzureTts::playbackEnabled() const { return playbackEnabled_; }
 
+bool AzureTts::testCredentials() {
+  if (state_ != Idle) return false;
+  if (!endpoint_.length() || !key_.length() || !defaultVoice_.length()) return false;
+  return ensureToken_();
+}
+
 AzureTts::LastResult AzureTts::lastResult() const { return last_; }
 
 // ---- task ----
@@ -500,6 +506,10 @@ bool AzureTts::speakAsync(const String& text, uint32_t speakId, const char* voic
   reqText_ = text;
   reqVoice_ = voice ? String(voice) : defaultVoice_;
   if (!reqVoice_.length()) reqVoice_ = defaultVoice_;
+  if (!reqVoice_.length()) {
+    M5.Log.printf("[TTS] Azure voice is not set\n");
+    return false;
+  }
   currentSpeakId_ = speakId;
   doneSpeakId_ = 0;
 

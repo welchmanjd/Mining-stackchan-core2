@@ -37,6 +37,7 @@ struct MiningSummary {
   uint32_t workDifficulty  = 0;     // このスナップショットの difficulty
   char     workSeed[41]    = {0};   // prev（最大40文字 + '\0'）
   char     workHashHex[41] = {0};   // out[20] を hex 化した40文字 + '\0'
+  bool     miningEnabled   = false;
 };
 
 

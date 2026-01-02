@@ -53,6 +53,7 @@ void buildPanelData(const MiningSummary& summary, UIMining& ui, UIMining::PanelD
   data.diff      = (float)summary.maxDifficulty;
 
   data.ping_ms   = summary.maxPingMs;
+  data.miningEnabled = summary.miningEnabled;
 
   data.elapsed_s = ui.uptimeSeconds();
   data.sw        = cfg.app_version;

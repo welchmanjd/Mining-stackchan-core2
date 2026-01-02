@@ -54,6 +54,8 @@ public:
   void setPlaybackEnabled(bool en);
   bool playbackEnabled() const;
 
+  bool testCredentials();
+
   LastResult lastResult() const;
 
 private:

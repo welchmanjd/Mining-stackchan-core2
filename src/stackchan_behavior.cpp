@@ -22,6 +22,7 @@ const char* eventName(StackchanEventType ev) {
     case StackchanEventType::InfoPing:         return "InfoPing";
     case StackchanEventType::InfoHashrate:     return "InfoHashrate";
     case StackchanEventType::InfoShares:       return "InfoShares";
+    case StackchanEventType::InfoMiningOff:    return "InfoMiningOff";
 
     case StackchanEventType::None:             return "None";
     case StackchanEventType::Placeholder:      return "Placeholder";
@@ -54,9 +55,22 @@ void StackchanBehavior::update(const UIMining::PanelData& panel, uint32_t nowMs)
     lastPoolAlive_ = panel.poolAlive;
     lastEventMs_ = nowMs;
 
-    // 15秒周期ローテ（最初の表示も15秒後に）
+    // 15遘貞捉譛溘Ο繝ｼ繝・ｼ域怙蛻昴・陦ｨ遉ｺ繧・5遘貞ｾ後↓・・
     nextInfoMs_ = nowMs + 15000;
-    infoIndex_  = 0;  // POOL から
+    infoIndex_  = 0;  // POOL 縺九ｉ
+  }
+
+  // 掘らないモード（duco_user 空）のときは固定メッセージだけ出す
+  if (!panel.miningEnabled) {
+    const uint32_t infoPeriodMs = 15000;
+    if (nextInfoMs_ == 0) nextInfoMs_ = nowMs;
+
+    if ((int32_t)(nowMs - nextInfoMs_) >= 0) {
+      triggerEvent(StackchanEventType::InfoMiningOff, nowMs);
+      nextInfoMs_ = nowMs + infoPeriodMs;
+    }
+    lastPoolAlive_ = panel.poolAlive;
+    return;
   }
 
   // Detect: new accepted share
@@ -68,8 +82,8 @@ void StackchanBehavior::update(const UIMining::PanelData& panel, uint32_t nowMs)
   }
 
   // Detect: pool disconnected (true -> false)
-  // NOTE: "no feedback (timeout)" は「未接続」ではなく「応答が来なかった」なので、発話イベントは出さない。
-  //       ダッシュボードでも喋らせない方針を維持するため、ここで PoolDisconnected 自体を抑制する。
+  // NOTE: "no feedback (timeout)" 縺ｯ縲梧悴謗･邯壹阪〒縺ｯ縺ｪ縺上悟ｿ懃ｭ斐′譚･縺ｪ縺九▲縺溘阪↑縺ｮ縺ｧ縲∫匱隧ｱ繧､繝吶Φ繝医・蜃ｺ縺輔↑縺・・
+  //       繝繝・す繝･繝懊・繝峨〒繧ょ幕繧峨○縺ｪ縺・婿驥昴ｒ邯ｭ謖√☆繧九◆繧√√％縺薙〒 PoolDisconnected 閾ｪ菴薙ｒ謚大宛縺吶ｋ縲・
   if (poolInit_ && lastPoolAlive_ && !panel.poolAlive) {
     const bool isTimeoutNoFeedback =
         (panel.poolDiag == "No result response from the pool.");
@@ -102,7 +116,7 @@ void StackchanBehavior::update(const UIMining::PanelData& panel, uint32_t nowMs)
     triggerEvent(ev, nowMs);
   }
 
-  // Idle tick（Infoが15秒で回るので基本出ないが、保険として残す）
+  // Idle tick・・nfo縺・5遘偵〒蝗槭ｋ縺ｮ縺ｧ蝓ｺ譛ｬ蜃ｺ縺ｪ縺・′縲∽ｿ晞匱縺ｨ縺励※谿九☆・・
   const uint32_t idleMs = 30000;
   if ((uint32_t)(nowMs - lastEventMs_) >= idleMs) {
     triggerEvent(StackchanEventType::IdleTick, nowMs);
@@ -147,7 +161,7 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev, uint32_t nowMs) {
     case StackchanEventType::ShareAccepted:
       r.priority   = ReactionPriority::High;
       r.expression = m5avatar::Expression::Happy;
-      r.speechText = "シェア獲得したよ!";
+      r.speechText = "繧ｷ繧ｧ繧｢迯ｲ蠕励＠縺溘ｈ!";
       r.speak      = true;
       emit = true;
       break;
@@ -155,7 +169,7 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev, uint32_t nowMs) {
     case StackchanEventType::PoolDisconnected:
       r.priority   = ReactionPriority::High;
       r.expression = m5avatar::Expression::Doubt;
-      r.speechText = "サーバーにつながらないみたい";
+      r.speechText = "繧ｵ繝ｼ繝舌・縺ｫ縺､縺ｪ縺後ｉ縺ｪ縺・∩縺溘＞";
       r.speak      = true;
       emit = true;
       break;
@@ -163,7 +177,7 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev, uint32_t nowMs) {
     case StackchanEventType::InfoPool: {
       r.priority   = ReactionPriority::Low;
       r.expression = m5avatar::Expression::Neutral;
-      // 例: "POOL:Mainnet"
+      // 萓・ "POOL:Mainnet"
       String name = infoPoolName_;
       if (!name.length()) name = "unknown";
       r.speechText = "POOL:" + name;
@@ -175,7 +189,7 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev, uint32_t nowMs) {
     case StackchanEventType::InfoPing: {
       r.priority   = ReactionPriority::Low;
       r.expression = m5avatar::Expression::Neutral;
-      // 例: "PING:42ms" / "PING:--"
+      // 萓・ "PING:42ms" / "PING:--"
       if (infoPingMs_ >= 0.0f) {
         r.speechText = "PING:" + String((int)(infoPingMs_ + 0.5f)) + "ms";
       } else {
@@ -189,7 +203,7 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev, uint32_t nowMs) {
     case StackchanEventType::InfoHashrate: {
       r.priority   = ReactionPriority::Low;
       r.expression = m5avatar::Expression::Neutral;
-      // 例: "HR:12.3kH/s"
+      // 萓・ "HR:12.3kH/s"
       r.speechText = "HR:" + String(infoHrKh_, 1) + "kH/s";
       r.speak      = false;
       emit = true;
@@ -199,8 +213,17 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev, uint32_t nowMs) {
     case StackchanEventType::InfoShares: {
       r.priority   = ReactionPriority::Low;
       r.expression = m5avatar::Expression::Neutral;
-      // 例: "SHR:10/1" (accepted/rejected)
+      // 萓・ "SHR:10/1" (accepted/rejected)
       r.speechText = "SHR:" + String(infoAccepted_) + "/" + String(infoRejected_);
+      r.speak      = false;
+      emit = true;
+      break;
+    }
+
+    case StackchanEventType::InfoMiningOff: {
+      r.priority   = ReactionPriority::Low;
+      r.expression = m5avatar::Expression::Neutral;
+      r.speechText = "掘ってないよ";
       r.speak      = false;
       emit = true;
       break;
@@ -249,7 +272,7 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev, uint32_t nowMs) {
       LOG_EVT_INFO("EVT_BEH_DROP",
                    "rid=%lu type=%s prio=%s speak=%d len=%u text=%s reason=prio_lower",
                    (unsigned long)r.rid, eventName(r.evType), priorityName(r.priority),
-                   r.speak ? 1 : 0, (unsigned)newLen, newShort.c_str());
+                   r.speak ? 1 : 0, (unsigned)newLen, shortenText(r.speechText, 16, oldLen).c_str());
     }
   }
 }

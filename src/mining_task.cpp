@@ -9,6 +9,7 @@
 #include <ArduinoJson.h>
 #include <mbedtls/sha1.h>
 
+#include "runtime_features.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -513,6 +514,13 @@ static void duco_task(void* pv) {
 
 // ---------------- 公開関数 ----------------
 void startMiner() {
+  const auto features = getRuntimeFeatures();
+  if (!features.miningEnabled) {
+    g_status = "disabled";
+    g_poolDiagText = "Mining is disabled (Duco user is empty).";
+    return;
+  }
+
   g_shaMutex = xSemaphoreCreateMutex();
 
   uint64_t chipid = ESP.getEfuseMac();
@@ -546,6 +554,8 @@ void startMiner() {
 
 // 集計だけ行い、UI に依存しない形で返す
 void updateMiningSummary(MiningSummary& out) {
+  const auto features = getRuntimeFeatures();
+
   float    total_kh = 0.0f;
   float    maxPing  = 0.0f;
   uint32_t acc = 0, rej = 0, diff = 0;
@@ -571,6 +581,7 @@ void updateMiningSummary(MiningSummary& out) {
   out.anyConnected  = g_any_connected;
   out.poolName      = g_node_name;
   out.maxPingMs     = maxPing;
+  out.miningEnabled = features.miningEnabled;
 
   char logbuf[64];
   snprintf(logbuf, sizeof(logbuf),

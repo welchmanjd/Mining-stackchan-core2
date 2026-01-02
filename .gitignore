@@ -14,3 +14,7 @@ dist/
 
 # local helper scripts (not for repo)
 tools/
+
+# セットアップ用のページは別のリポジトリで作ってる
+setup-web/
+

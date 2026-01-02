@@ -243,6 +243,10 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText, bool suppre
       // WiFi がまだならプールも待機扱い
       poolText = "Waiting";
       poolCol  = COL_LABEL;           // グレー
+    } else if (!p.miningEnabled) {
+      // 掘らないモード（duco_user 空）
+      poolText = "OFF";
+      poolCol  = COL_LABEL;
     } else if (p.poolAlive) {
       // プールから仕事が来ている → マイニング可能
       poolText = "OK";
@@ -267,7 +271,9 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText, bool suppre
     }
 
     String poolHint;
-    if ((poolText == "NG" || poolText == "Waiting") && p.poolDiag.length()) {
+    if (poolText == "OFF") {
+      poolHint = "Duco user is empty. Mining is disabled.";
+    } else if ((poolText == "NG" || poolText == "Waiting") && p.poolDiag.length()) {
       poolHint = p.poolDiag;
     } else {
       poolHint = "";
@@ -293,7 +299,7 @@ void UIMining::drawAll(const PanelData& p, const String& tickerText, bool suppre
     // スプラッシュ終了条件:
     // WiFi 接続 ＋ Pool alive ＋ 最低3秒経過 ＋
     // 「全部 OK になってから 1 秒待つ」場合だけ遷移する
-    bool ok_now = (w == WL_CONNECTED) && p.poolAlive;
+    bool ok_now = (w == WL_CONNECTED) && (p.miningEnabled ? p.poolAlive : true);
 
     if (ok_now) {
       if (splash_ready_ms_ == 0) {

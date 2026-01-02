@@ -37,6 +37,7 @@ public:
     float    bestshare  = -1.0f;
 
     bool     poolAlive  = false;
+    bool     miningEnabled = false;
     float    diff       = 0.0f;
 
     uint32_t elapsed_s  = 0;

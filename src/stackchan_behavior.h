@@ -25,6 +25,7 @@ enum class StackchanEventType : uint8_t {
   InfoPing,
   InfoHashrate,
   InfoShares,
+  InfoMiningOff,
 
   Placeholder,
 };
