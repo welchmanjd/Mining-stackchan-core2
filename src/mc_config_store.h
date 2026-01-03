@@ -28,3 +28,7 @@ const char* mcCfgAzVoice();
 
 // 任意：カスタムサブドメイン/エンドポイント（未設定なら空）
 const char* mcCfgAzEndpoint();
+
+const char* mcCfgAttentionText();
+
+uint8_t mcCfgSpkVolume();

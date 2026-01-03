@@ -39,35 +39,43 @@ struct AppConfig {
   const char* app_name;
   const char* app_version;
 
+  //const char* attention_text;
   const char* attention_text;
 };
 
 inline const AppConfig& appConfig() {
   static AppConfig cfg{
+    // wifi
     mcCfgWifiSsid(),
     mcCfgWifiPass(),
+
+    // duco
     mcCfgDucoUser(),
     mcCfgDucoKey(),
+    "Mining-Stackchan-Core2", // duco_rig_name
+    "M5StackCore2",           // duco_banner
 
-    "Mining-Stackchan-Core2",
-    "M5StackCore2",
-
+    // azure tts
     mcCfgAzRegion(),
     mcCfgAzKey(),
     mcCfgAzVoice(),
 
-    "Mining-Stackchan-Core2",
-    "0.65",
+    // app
+    "Mining-Stackchan-Core2", // app_name
+    "0.66",                   // app_version
 
-    MC_ATTENTION_TEXT
+    // attention
+    mcCfgAttentionText()
   };
+
   // 実行中にSETされた場合にも反映されるよう、毎回上書き（ポインタ差し替えのみ）
-  cfg.wifi_ssid = mcCfgWifiSsid();
-  cfg.wifi_pass = mcCfgWifiPass();
-  cfg.duco_user = mcCfgDucoUser();
-  cfg.duco_miner_key = mcCfgDucoKey();
-  cfg.az_speech_region = mcCfgAzRegion();
-  cfg.az_speech_key    = mcCfgAzKey();
-  cfg.az_tts_voice     = mcCfgAzVoice();
+  cfg.wifi_ssid       = mcCfgWifiSsid();
+  cfg.wifi_pass       = mcCfgWifiPass();
+  cfg.duco_user       = mcCfgDucoUser();
+  cfg.duco_miner_key  = mcCfgDucoKey();
+  cfg.az_speech_region= mcCfgAzRegion();
+  cfg.az_speech_key   = mcCfgAzKey();
+  cfg.az_tts_voice    = mcCfgAzVoice();
+  cfg.attention_text  = mcCfgAttentionText();
   return cfg;
 }

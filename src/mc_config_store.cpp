@@ -43,6 +43,10 @@
   #define MC_ATTENTION_TEXT "Hi there!"
 #endif
 
+#ifndef MC_SPK_VOLUME
+  #define MC_SPK_VOLUME 160
+#endif
+
 namespace {
 
 static const char* kCfgPath = "/mc_config.json";
@@ -63,6 +67,8 @@ struct RuntimeCfg {
 
   uint32_t display_sleep_s = MC_DISPLAY_SLEEP_SECONDS;
   String attention_text;
+  uint8_t spk_volume = (uint8_t)MC_SPK_VOLUME; // 0-255
+
 };
 
 static RuntimeCfg g_rt;
@@ -84,6 +90,7 @@ static void applyDefaults_() {
 
   g_rt.display_sleep_s = (uint32_t)MC_DISPLAY_SLEEP_SECONDS;
   g_rt.attention_text  = MC_ATTENTION_TEXT;
+  g_rt.spk_volume      = (uint8_t)MC_SPK_VOLUME;
 }
 
 static void loadOnce_() {
@@ -125,6 +132,15 @@ static void loadOnce_() {
     if (!v.isNull()) dst = v.as<uint32_t>();
   };
 
+  auto setU8 = [&](const char* key, uint8_t& dst) {
+    JsonVariant v = doc[key];
+    if (v.isNull()) return;
+    int n = v.as<int>();
+    if (n < 0) n = 0;
+    if (n > 255) n = 255;
+    dst = (uint8_t)n;
+  };
+
   setStr("wifi_ssid", g_rt.wifi_ssid);
   setStr("wifi_pass", g_rt.wifi_pass);
 
@@ -141,6 +157,8 @@ static void loadOnce_() {
   setStr("attention_text",  g_rt.attention_text);
 
   mc_logf("[CFG] loaded %s\n", kCfgPath);
+
+  setU8("spk_volume",       g_rt.spk_volume);
 }
 
 static bool isKeyKnown_(const String& key) {
@@ -151,7 +169,8 @@ static bool isKeyKnown_(const String& key) {
          key == "az_voice"  || key == "az_tts_voice" ||
          key == "az_endpoint" || key == "az_custom_subdomain" ||
          key == "display_sleep_s" ||
-         key == "attention_text";
+         key == "attention_text" ||
+         key == "spk_volume";
 }
 
 } // namespace
@@ -205,8 +224,21 @@ bool mcConfigSetKV(const String& key, const String& value, String& err) {
     return true;
   }
 
+  if (key == "spk_volume") {
+    char* endp = nullptr;
+    long v = strtol(value.c_str(), &endp, 10);
+    if (endp == value.c_str() || v < 0 || v > 255) {
+      err = "range(0-255)";
+      return false;
+    }
+    g_rt.spk_volume = (uint8_t)v;
+    setDirty();
+    return true;
+  }
+
   err = "unknown_key";
   return false;
+
 }
 
 bool mcConfigSave(String& err) {
@@ -234,6 +266,7 @@ bool mcConfigSave(String& err) {
 
   doc["display_sleep_s"] = g_rt.display_sleep_s;
   doc["attention_text"]  = g_rt.attention_text;
+  doc["spk_volume"]      = g_rt.spk_volume;
 
   File f = LittleFS.open(kCfgPath, "w");
   if (!f) {
@@ -276,7 +309,7 @@ String mcConfigGetMaskedJson() {
 
   doc["display_sleep_s"] = g_rt.display_sleep_s;
   doc["attention_text"]  = g_rt.attention_text;
-
+  doc["spk_volume"]      = g_rt.spk_volume;
   String out;
   serializeJson(doc, out);
   return out;
@@ -299,3 +332,4 @@ const char* mcCfgAzEndpoint() { loadOnce_(); return g_rt.az_endpoint.c_str(); }
 
 uint32_t mcCfgDisplaySleepSeconds() { loadOnce_(); return g_rt.display_sleep_s; }
 const char* mcCfgAttentionText()    { loadOnce_(); return g_rt.attention_text.c_str(); }
+uint8_t mcCfgSpkVolume()            { loadOnce_(); return g_rt.spk_volume; }

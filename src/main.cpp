@@ -127,7 +127,7 @@ static void handleSetupLine(const char* line) {
       return;
     }
     // Reload runtime Azure config so tests after SET/SAVE work without reboot.
-    g_tts.begin();
+    g_tts.begin(mcCfgSpkVolume());
     bool ok = g_tts.testCredentials();
     if (ok) Serial.println("@AZTEST OK");
     else    Serial.println("@AZTEST NG fetch_failed");
@@ -165,6 +165,16 @@ static void handleSetupLine(const char* line) {
         UIMining::instance().setAttentionDefaultText(val.c_str());
         mc_logf("[MAIN] attention_text set: %s", val.c_str());
       }
+
+      if (key.equalsIgnoreCase("spk_volume")) {
+        int v = val.toInt();
+        if (v < 0) v = 0;
+        if (v > 255) v = 255;
+        M5.Speaker.setVolume((uint8_t)v);
+        mc_logf("[MAIN] spk_volume set: %d", v);
+      }
+
+
 
       Serial.print("@OK SET ");
       Serial.println(key);
@@ -403,6 +413,9 @@ void setup() {
   M5.begin(cfg_m5);
   mc_logf("[MAIN] M5.begin() done");
 
+  M5.Speaker.setVolume(mcCfgSpkVolume());
+  mc_logf("[MAIN] spk_volume=%u", (unsigned)mcCfgSpkVolume());
+  
   const auto& cfg = appConfig();
 
   // Apply display sleep seconds from mc_config_store (via @CFG JSON)
@@ -424,7 +437,7 @@ void setup() {
 
   // ★ UI起動 & スプラッシュ表示
   UIMining::instance().begin(cfg.app_name, cfg.app_version);
-  UIMining::instance().setAttentionDefaultText(cfg.attention_text);
+  UIMining::instance().setAttentionDefaultText(mcCfgAttentionText());
 
   // スタックチャン「喋る/黙る」時間設定（単位: ms）
   UIMining::instance().setStackchanSpeechTiming(
@@ -686,7 +699,7 @@ void loop() {
     g_attentionActive = true;
     g_attentionUntilMs = now + dur;
 
-    ui.triggerAttention(dur, appConfig().attention_text);
+    ui.triggerAttention(dur, nullptr);
     M5.Speaker.tone(1800, 30);
 
     if (g_bubbleOnlyActive) {
