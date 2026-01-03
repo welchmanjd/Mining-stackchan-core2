@@ -25,6 +25,17 @@
 // Attentionモードで表示するデフォルト吹き出し（ボタンA / タップ）
 #define MC_ATTENTION_TEXT  "Hi there!"
 
-// 任意：Speech リソースのカスタムサブドメイン
+// ★追加：デフォルトのセリフ（必要なら自由に差し替え）
+// ShareAccepted（シェア獲得時）
+#define MC_SPEECH_SHARE_ACCEPTED "掘れたよ！"
+// 起動テスト等（「こんにちはマイニングスタックチャンです」）
+#define MC_SPEECH_HELLO "こんにちはマイニングスタックチャンです"
+
+// 任意：あれば：Speech リソースのカスタムサブドメイン
 // 例) "my-speech-app"  または  "my-speech-app.cognitiveservices.azure.com"
 #define MC_AZ_CUSTOM_SUBDOMAIN ""
+
+// ★追加：CPU動作周波数（MHz）
+// 80 / 160 / 240 あたりが代表値
+#define MC_CPU_FREQ_MHZ 240
+

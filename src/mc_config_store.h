@@ -32,3 +32,8 @@ const char* mcCfgAzEndpoint();
 const char* mcCfgAttentionText();
 
 uint8_t mcCfgSpkVolume();
+
+const char* mcCfgShareAcceptedText();
+const char* mcCfgHelloText();
+
+uint32_t mcCfgCpuMhz();

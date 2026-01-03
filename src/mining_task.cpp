@@ -200,9 +200,10 @@ if (tidx >= 0 && tidx >= (int)g_mining_active_threads) {
 
     int nlen = u32_to_dec(nonce_ptr, nonce);
 
-    if (g_shaMutex) xSemaphoreTake(g_shaMutex, portMAX_DELAY);
+    // 修正案：Mutexを外してパフォーマンス増加を期待
+    // if (g_shaMutex) xSemaphoreTake(g_shaMutex, portMAX_DELAY); // 削除
     sha1_calc((const unsigned char*)buf, seed_len + nlen, out);
-    if (g_shaMutex) xSemaphoreGive(g_shaMutex);
+    // if (g_shaMutex) xSemaphoreGive(g_shaMutex);               // 削除
 
     hashes_done++;
 

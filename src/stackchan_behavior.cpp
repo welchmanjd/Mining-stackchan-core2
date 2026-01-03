@@ -1,6 +1,7 @@
 // src/stackchan_behavior.cpp
 #include "stackchan_behavior.h"
 #include "logging.h"
+#include "config.h"   // ★追加：appConfig() を使う
 
 namespace {
 const char* priorityName(ReactionPriority p) {
@@ -160,7 +161,7 @@ void StackchanBehavior::triggerEvent(StackchanEventType ev, uint32_t nowMs) {
     case StackchanEventType::ShareAccepted:
       r.priority   = ReactionPriority::High;
       r.expression = m5avatar::Expression::Happy;
-      r.speechText = "シェア獲得したよ！";
+      r.speechText = appConfig().share_accepted_text;  // ★変更：設定値
       r.speak      = true;
       emit = true;
       break;

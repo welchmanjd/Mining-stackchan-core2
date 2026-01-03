@@ -28,7 +28,6 @@
 
 // Azure TTS
 static AzureTts g_tts;
-#include "runtime_features.h"
 
 
 // UI 更新用の前回時刻 [ms]
@@ -173,6 +172,15 @@ static void handleSetupLine(const char* line) {
         M5.Speaker.setVolume((uint8_t)v);
         mc_logf("[MAIN] spk_volume set: %d", v);
       }
+
+      if (key.equalsIgnoreCase("cpu_mhz")) {
+        int mhz = val.toInt();
+        // mcConfigSetKV 側で 80/160/240 のみ許可している前提
+        setCpuFrequencyMhz(mhz);
+        mc_logf("[MAIN] cpu_mhz set: %d (now=%d)", mhz, getCpuFrequencyMhz());
+      }
+
+
 
 
 
@@ -396,8 +404,11 @@ void setup() {
   delay(50);
   mc_logf("[MAIN] setup() start");
 
-  // --- CPUクロックを最大に ---
-  setCpuFrequencyMhz(160);
+  // --- CPUクロック ---
+  const uint32_t req_mhz = mcCfgCpuMhz(); // LittleFS設定があれば優先
+  setCpuFrequencyMhz((int)req_mhz);
+  mc_logf("[MAIN] cpu_mhz=%d (req=%lu)", getCpuFrequencyMhz(), (unsigned long)req_mhz);
+
 
   // --- M5Unified の設定 ---
   auto cfg_m5 = M5.config();
@@ -647,9 +658,9 @@ void loop() {
   // ここから「画面がON」の時の処理
   UIMining& ui = UIMining::instance();
 
-  // Bボタン：固定文を喋る（動作確認用）
+  // Bボタン：設定された「こんにちは」を喋る（動作確認用）
   if (btnB) {
-    const char* text = "Hello from Mining Stackchan.";
+    const char* text = appConfig().hello_text;  // ★変更：設定値（config_private.h / Webで上書き可）
     if (features.ttsEnabled) {
       if (!g_tts.speakAsync(text, (uint32_t)0, nullptr)) {
         mc_logf("[TTS] speakAsync failed (busy / wifi / config?)");
@@ -662,6 +673,7 @@ void loop() {
       g_bubbleOnlyEvType = 0;
     }
   }
+
 
   if (anyInput) lastInputMs = now;
 
