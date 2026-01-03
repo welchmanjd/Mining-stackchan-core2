@@ -256,14 +256,20 @@ String mcConfigGetMaskedJson() {
   loadOnce_();
 
   DynamicJsonDocument doc(2048);
+  const bool wifi_pass_set = g_rt.wifi_pass.length() > 0;
+  const bool duco_key_set  = (g_rt.duco_key.length() > 0) && (g_rt.duco_key != "None");
+  const bool az_key_set    = g_rt.az_key.length() > 0;
   doc["wifi_ssid"] = g_rt.wifi_ssid;
   doc["wifi_pass"] = "***";
+  doc["wifi_pass_set"] = wifi_pass_set;
 
   doc["duco_user"] = g_rt.duco_user;
   doc["duco_key"]  = "***";
+  doc["duco_key_set"] = duco_key_set;
 
   doc["az_region"] = g_rt.az_region;
   doc["az_key"]    = "***";
+  doc["az_key_set"] = az_key_set;
   doc["az_voice"]  = g_rt.az_voice;
 
   doc["az_endpoint"] = g_rt.az_endpoint;
