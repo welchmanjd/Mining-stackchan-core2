@@ -80,7 +80,7 @@ inline const AppConfig& appConfig() {
 
     // app
     "Mining-Stackchan-Core2", // app_name
-    "0.67",                   // app_version
+    "0.681",                   // app_version
 
     // attention
     mcCfgAttentionText(),
